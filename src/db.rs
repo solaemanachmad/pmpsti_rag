@@ -1,0 +1,1029 @@
+use anyhow::Result;
+use chrono::Utc;
+use pgvector::Vector;
+use sqlx::{PgPool, Row};
+
+// ══════════════════════════════════════════════════════════════════
+//  MODELS
+// ══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub title:        String,
+    pub content:      String,
+    pub snippet:      String,   // extracted window, siap tampil ke user
+    pub category:     String,
+    pub subcategory:  String,
+    pub source_url:   String,
+    pub page_number:  Option<i32>,
+    pub chunk_index:  Option<i32>,
+    pub score:        f64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct User {
+    pub id:            i64,
+    pub email:         String,
+    #[serde(skip_serializing)]
+    pub password_hash: String,
+    pub display_name:  String,
+    pub role:          String,
+    pub is_active:     bool,
+    pub created_at:    String,
+    pub updated_at:    String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChatSession {
+    pub id:          String,
+    pub user_id:     i64,
+    pub title:       String,
+    pub messages:    Vec<ChatMessage>,
+    pub created_at:  String,
+    pub updated_at:  String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChatSource {
+    pub title:      String,
+    pub snippet:    String,
+    pub source_url: String,
+    pub category:   String,
+    pub score:      f64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChatMessage {
+    pub role:       String,   // "user" | "assistant"
+    pub content:    String,
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources:    Vec<ChatSource>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionListItem {
+    pub id:            String,
+    pub title:         String,
+    pub updated_at:    String,
+    pub message_count: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ApiKeyInfo {
+    pub id:           i64,
+    pub key_prefix:   String,
+    pub name:         String,
+    pub permissions:  Vec<String>,
+    pub rate_limit:   i64,
+    pub is_active:    bool,
+    pub last_used_at: Option<String>,
+    pub created_at:   String,
+    pub expires_at:   Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct QueryLogStats {
+    pub total_queries:        i64,
+    pub unique_queries:       i64,
+    pub avg_results:          f64,
+    pub avg_search_time_ms:   f64,
+    pub zero_result_queries:  i64,
+    pub language_distribution: Vec<(String, i64)>,
+    pub domain_distribution:   Vec<(String, i64)>,
+    pub queries_per_day:       Vec<(String, i64)>,
+    pub top_queries:           Vec<(String, i64)>,
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  DATABASE
+// ══════════════════════════════════════════════════════════════════
+
+pub struct Database {
+    pub pool: PgPool,
+}
+
+impl Database {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  SETUP & MIGRATION
+    //  Aman dijalankan berulang — semua pakai IF NOT EXISTS /
+    //  ADD COLUMN IF NOT EXISTS (PostgreSQL 9.6+)
+    // ════════════════════════════════════════════════════════════
+    pub async fn setup(&self) -> Result<()> {
+        // Extension
+        sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
+            .execute(&self.pool)
+            .await?;
+
+        // Tabel utama dokumen (sudah ada dari ingest, tidak diubah)
+        sqlx::query("
+            CREATE TABLE IF NOT EXISTS documents (
+                id            SERIAL PRIMARY KEY,
+                document_id   TEXT,
+                title         TEXT,
+                content       TEXT,
+                document_type TEXT,
+                source_url    TEXT,
+                category      TEXT DEFAULT '',
+                subcategory   TEXT DEFAULT '',
+                file_hash     TEXT DEFAULT '',
+                embedding     vector(768),
+                page_number   INTEGER,
+                chunk_index   INTEGER
+            )
+        ").execute(&self.pool).await?;
+
+        sqlx::query("
+            CREATE INDEX IF NOT EXISTS documents_embedding_idx
+            ON documents USING hnsw (embedding vector_cosine_ops)
+        ").execute(&self.pool).await?;
+
+        // GIN index untuk full-text search
+        sqlx::query("
+            CREATE INDEX IF NOT EXISTS documents_fts_idx
+            ON documents USING gin (to_tsvector('indonesian', content))
+        ").execute(&self.pool).await?;
+
+        // Users
+        sqlx::query("
+            CREATE TABLE IF NOT EXISTS users (
+                id            BIGSERIAL PRIMARY KEY,
+                email         TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                display_name  TEXT DEFAULT '',
+                role          TEXT DEFAULT 'user',
+                is_active     BOOLEAN DEFAULT TRUE,
+                created_at    TIMESTAMPTZ DEFAULT NOW(),
+                updated_at    TIMESTAMPTZ DEFAULT NOW()
+            )
+        ").execute(&self.pool).await?;
+
+        // Chat sessions
+        sqlx::query("
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                id         TEXT PRIMARY KEY,
+                user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                title      TEXT DEFAULT '',
+                messages   JSONB DEFAULT '[]',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        ").execute(&self.pool).await?;
+
+        sqlx::query("
+            CREATE INDEX IF NOT EXISTS chat_sessions_user_idx
+            ON chat_sessions(user_id, updated_at DESC)
+        ").execute(&self.pool).await?;
+
+        // API keys
+        sqlx::query("
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id           BIGSERIAL PRIMARY KEY,
+                user_id      BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                key_prefix   TEXT NOT NULL,
+                key_hash     TEXT NOT NULL,
+                name         TEXT NOT NULL DEFAULT 'Default',
+                permissions  JSONB DEFAULT '[\"search\",\"read\"]',
+                rate_limit   INTEGER DEFAULT 30,
+                is_active    BOOLEAN DEFAULT TRUE,
+                last_used_at TIMESTAMPTZ,
+                created_at   TIMESTAMPTZ DEFAULT NOW(),
+                expires_at   TIMESTAMPTZ
+            )
+        ").execute(&self.pool).await?;
+
+        sqlx::query("
+            CREATE UNIQUE INDEX IF NOT EXISTS api_keys_prefix_idx
+            ON api_keys(key_prefix)
+        ").execute(&self.pool).await?;
+
+        // Query logs
+        sqlx::query("
+            CREATE TABLE IF NOT EXISTS query_logs (
+                id                BIGSERIAL PRIMARY KEY,
+                query_text        TEXT NOT NULL,
+                detected_language TEXT DEFAULT '',
+                detected_domain   TEXT DEFAULT '',
+                num_results       INTEGER DEFAULT 0,
+                top_score         REAL DEFAULT 0.0,
+                search_time_ms    BIGINT DEFAULT 0,
+                session_id        TEXT,
+                user_id           BIGINT,
+                created_at        TIMESTAMPTZ DEFAULT NOW()
+            )
+        ").execute(&self.pool).await?;
+
+        sqlx::query("
+            CREATE INDEX IF NOT EXISTS query_logs_created_idx
+            ON query_logs(created_at DESC)
+        ").execute(&self.pool).await?;
+
+        sqlx::query("
+            CREATE INDEX IF NOT EXISTS query_logs_language_idx
+            ON query_logs(detected_language)
+        ").execute(&self.pool).await?;
+
+        // ── Safe migrations: tambah kolom baru kalau belum ada ──
+        // (PostgreSQL 9.6+ mendukung ADD COLUMN IF NOT EXISTS)
+        let migrations = [
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user'",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
+            "ALTER TABLE query_logs ADD COLUMN IF NOT EXISTS user_id BIGINT",
+            "ALTER TABLE query_logs ADD COLUMN IF NOT EXISTS detected_domain TEXT DEFAULT ''",
+        ];
+
+        for sql in &migrations {
+            if let Err(e) = sqlx::query(sql).execute(&self.pool).await {
+                log::warn!("Migration skipped ({}): {}", sql, e);
+            }
+        }
+
+        log::info!("Database schema ready.");
+        Ok(())
+    }
+
+
+    // ════════════════════════════════════════════════════════════
+    //  SEARCH — PURE VECTOR
+    // ════════════════════════════════════════════════════════════
+    pub async fn search_vector(
+        &self,
+        query_embedding: Vec<f32>,
+        limit: i64,
+        category_filter: Option<&str>,
+    ) -> Result<Vec<SearchResult>, sqlx::Error> {
+        let vec = Vector::from(query_embedding);
+
+        let rows = sqlx::query(
+            "SELECT title, content, category, subcategory,
+                    COALESCE(source_url, '') AS source_url,
+                    page_number, chunk_index,
+                    1.0 - (embedding <=> $1) AS score
+             FROM documents
+             WHERE ($3::text IS NULL OR category = $3)
+             ORDER BY embedding <=> $1
+             LIMIT $2",
+        )
+        .bind(&vec)
+        .bind(limit)
+        .bind(category_filter)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows_to_results(rows))
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  SEARCH — HYBRID (Vector 70% + BM25 30%)
+    // ════════════════════════════════════════════════════════════
+    pub async fn search_hybrid(
+        &self,
+        query_text: &str,
+        query_embedding: Vec<f32>,
+        limit: i64,
+        category_filter: Option<&str>,
+    ) -> Result<Vec<SearchResult>, sqlx::Error> {
+        let vec = Vector::from(query_embedding);
+
+        let rows = sqlx::query(
+            "SELECT title, content, category, subcategory,
+                    COALESCE(source_url, '') AS source_url,
+                    page_number, chunk_index,
+                    (
+                        0.7 * (1.0 - (embedding <=> $1))
+                      + 0.3 * ts_rank(
+                            to_tsvector('indonesian', content),
+                            plainto_tsquery('indonesian', $2),
+                            1
+                        )
+                    ) AS score
+             FROM documents
+             WHERE ($4::text IS NULL OR category = $4)
+             ORDER BY score DESC
+             LIMIT $3",
+        )
+        .bind(&vec)
+        .bind(query_text)
+        .bind(limit)
+        .bind(category_filter)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows_to_results(rows))
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  SEARCH — PURE FULL-TEXT (BM25)
+    // ════════════════════════════════════════════════════════════
+    pub async fn search_fulltext(
+        &self,
+        query_text: &str,
+        limit: i64,
+        category_filter: Option<&str>,
+    ) -> Result<Vec<SearchResult>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT title, content, category, subcategory,
+                    COALESCE(source_url, '') AS source_url,
+                    page_number, chunk_index,
+                    ts_rank(
+                        to_tsvector('indonesian', content),
+                        plainto_tsquery('indonesian', $1),
+                        1
+                    )::float8 AS score
+             FROM documents
+             WHERE to_tsvector('indonesian', content)
+                   @@ plainto_tsquery('indonesian', $1)
+               AND ($3::text IS NULL OR category = $3)
+             ORDER BY score DESC
+             LIMIT $2",
+        )
+        .bind(query_text)
+        .bind(limit)
+        .bind(category_filter)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows_to_results(rows))
+    }
+
+
+    // ════════════════════════════════════════════════════════════
+    //  SNIPPET EXTRACTION
+    //  Sliding window cari bagian content paling relevan dengan query.
+    //  Diadaptasi dari program Kitab — term matching + phrase bonus.
+    // ════════════════════════════════════════════════════════════
+
+    /// Ekstrak snippet terbaik dari content berdasarkan query terms.
+    /// Memecah content menjadi window ~200 kata, cari window dengan
+    /// skor term-match tertinggi, truncate di batas kalimat.
+    pub fn extract_snippet(content: &str, query_terms: &[&str], max_chars: usize) -> String {
+        if content.is_empty() {
+            return String::new();
+        }
+
+        // Jika tidak ada terms atau content pendek, langsung truncate
+        if query_terms.is_empty() || content.chars().count() <= max_chars {
+            return truncate_at_sentence(content, max_chars);
+        }
+
+        // Pecah content menjadi kata-kata, lalu buat sliding windows
+        let words: Vec<&str> = content.split_whitespace().collect();
+        let window_words = 60usize; // ~300-400 karakter per window
+        let step = 20usize;
+
+        if words.len() <= window_words {
+            return truncate_at_sentence(content, max_chars);
+        }
+
+        let mut best_score = 0usize;
+        let mut best_start = 0usize;
+
+        let mut start = 0;
+        while start + window_words <= words.len() {
+            let window_text = words[start..start + window_words].join(" ");
+            let normalized = window_text.to_lowercase();
+
+            let score: usize = query_terms.iter().map(|term| {
+                let t = term.to_lowercase();
+                // Phrase match (spasi) → 3×, single term → 1×
+                if t.contains(' ') {
+                    if normalized.contains(&t) { 3 } else { 0 }
+                } else {
+                    // Hitung frekuensi kemunculan
+                    let count = normalized.matches(t.as_str()).count();
+                    count.min(3) // cap agar satu term tidak mendominasi
+                }
+            }).sum();
+
+            if score > best_score {
+                best_score = score;
+                best_start = start;
+            }
+
+            start += step;
+        }
+
+        // Ambil window terbaik + sedikit konteks setelahnya
+        let end = (best_start + window_words + 20).min(words.len());
+        let snippet_raw = words[best_start..end].join(" ");
+
+        truncate_at_sentence(&snippet_raw, max_chars)
+    }
+
+    /// Util: truncate di batas kalimat terdekat sebelum max_chars
+    fn truncate_snippet(content: &str, max_chars: usize) -> String {
+        truncate_at_sentence(content, max_chars)
+    }
+
+
+    // ════════════════════════════════════════════════════════════
+    //  QUERY LOGGING
+    // ════════════════════════════════════════════════════════════
+
+    pub async fn log_query(
+        &self,
+        query_text:        &str,
+        detected_language: &str,
+        detected_domain:   &str,
+        num_results:       i32,
+        top_score:         f32,
+        search_time_ms:    i64,
+        session_id:        Option<&str>,
+        user_id:           Option<i64>,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO query_logs
+                (query_text, detected_language, detected_domain,
+                 num_results, top_score, search_time_ms, session_id, user_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(query_text)
+        .bind(detected_language)
+        .bind(detected_domain)
+        .bind(num_results)
+        .bind(top_score)
+        .bind(search_time_ms)
+        .bind(session_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_query_log_stats(&self) -> Result<QueryLogStats> {
+        let total_queries: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM query_logs"
+        ).fetch_one(&self.pool).await?;
+
+        let unique_queries: i64 = sqlx::query_scalar(
+            "SELECT COUNT(DISTINCT query_text) FROM query_logs"
+        ).fetch_one(&self.pool).await?;
+
+        let avg_results: f64 = sqlx::query_scalar(
+            "SELECT COALESCE(AVG(num_results), 0) FROM query_logs"
+        ).fetch_one(&self.pool).await?;
+
+        let avg_search_time_ms: f64 = sqlx::query_scalar(
+            "SELECT COALESCE(AVG(search_time_ms), 0) FROM query_logs"
+        ).fetch_one(&self.pool).await?;
+
+        let zero_result_queries: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM query_logs WHERE num_results = 0"
+        ).fetch_one(&self.pool).await?;
+
+        let language_distribution: Vec<(String, i64)> =
+            sqlx::query("SELECT detected_language, COUNT(*) as cnt FROM query_logs GROUP BY detected_language ORDER BY cnt DESC")
+                .fetch_all(&self.pool).await?
+                .iter()
+                .map(|r| (r.get::<String, _>("detected_language"), r.get::<i64, _>("cnt")))
+                .collect();
+
+        let domain_distribution: Vec<(String, i64)> =
+            sqlx::query("SELECT detected_domain, COUNT(*) as cnt FROM query_logs GROUP BY detected_domain ORDER BY cnt DESC")
+                .fetch_all(&self.pool).await?
+                .iter()
+                .map(|r| (r.get::<String, _>("detected_domain"), r.get::<i64, _>("cnt")))
+                .collect();
+
+        let queries_per_day: Vec<(String, i64)> =
+            sqlx::query("SELECT DATE(created_at)::text as day, COUNT(*) as cnt FROM query_logs WHERE created_at >= NOW() - INTERVAL '30 days' GROUP BY day ORDER BY day DESC")
+                .fetch_all(&self.pool).await?
+                .iter()
+                .map(|r| (r.get::<String, _>("day"), r.get::<i64, _>("cnt")))
+                .collect();
+
+        let top_queries: Vec<(String, i64)> =
+            sqlx::query("SELECT query_text, COUNT(*) as cnt FROM query_logs GROUP BY query_text ORDER BY cnt DESC LIMIT 20")
+                .fetch_all(&self.pool).await?
+                .iter()
+                .map(|r| (r.get::<String, _>("query_text"), r.get::<i64, _>("cnt")))
+                .collect();
+
+        Ok(QueryLogStats {
+            total_queries,
+            unique_queries,
+            avg_results,
+            avg_search_time_ms,
+            zero_result_queries,
+            language_distribution,
+            domain_distribution,
+            queries_per_day,
+            top_queries,
+        })
+    }
+
+    pub async fn cleanup_old_query_logs(&self, days: i64) -> Result<u64> {
+        let res = sqlx::query(
+            "DELETE FROM query_logs WHERE created_at < NOW() - ($1::bigint * INTERVAL '1 day')"
+        )
+        .bind(days)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+
+    // ════════════════════════════════════════════════════════════
+    //  USER MANAGEMENT
+    // ════════════════════════════════════════════════════════════
+
+    pub async fn create_user(
+        &self,
+        email:         &str,
+        password_hash: &str,
+        display_name:  &str,
+    ) -> Result<User, String> {
+        let row = sqlx::query(
+            "INSERT INTO users (email, password_hash, display_name, role, is_active)
+             VALUES ($1, $2, $3, 'user', TRUE)
+             RETURNING id, email, password_hash, display_name, role, is_active,
+                       created_at::text, updated_at::text",
+        )
+        .bind(email)
+        .bind(password_hash)
+        .bind(display_name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("unique") || e.to_string().contains("duplicate") {
+                "Email sudah terdaftar".to_string()
+            } else {
+                format!("Database error: {}", e)
+            }
+        })?;
+
+        Ok(row_to_user(&row))
+    }
+
+    pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>, String> {
+        let row = sqlx::query(
+            "SELECT id, email, password_hash, display_name, role, is_active,
+                    created_at::text, updated_at::text
+             FROM users WHERE email = $1",
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(row.map(|r| row_to_user(&r)))
+    }
+
+    pub async fn get_user_by_id(&self, user_id: i64) -> Result<Option<User>, String> {
+        let row = sqlx::query(
+            "SELECT id, email, password_hash, display_name, role, is_active,
+                    created_at::text, updated_at::text
+             FROM users WHERE id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(row.map(|r| row_to_user(&r)))
+    }
+
+    pub async fn update_user_profile(
+        &self,
+        user_id:      i64,
+        display_name: Option<&str>,
+        email:        Option<&str>,
+    ) -> Result<(), String> {
+        if let Some(name) = display_name {
+            sqlx::query(
+                "UPDATE users SET display_name = $1, updated_at = NOW() WHERE id = $2"
+            )
+            .bind(name)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+
+        if let Some(new_email) = email {
+            sqlx::query(
+                "UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2"
+            )
+            .bind(new_email)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("unique") || e.to_string().contains("duplicate") {
+                    "Email sudah digunakan".to_string()
+                } else {
+                    format!("Database error: {}", e)
+                }
+            })?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn update_user_password(
+        &self,
+        user_id:          i64,
+        new_password_hash: &str,
+    ) -> Result<(), String> {
+        sqlx::query(
+            "UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2"
+        )
+        .bind(new_password_hash)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn deactivate_user(&self, user_id: i64) -> Result<(), String> {
+        sqlx::query(
+            "UPDATE users SET is_active = FALSE, updated_at = NOW() WHERE id = $1"
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+
+    // ════════════════════════════════════════════════════════════
+    //  CHAT SESSIONS
+    // ════════════════════════════════════════════════════════════
+
+    pub async fn save_session(&self, session: &ChatSession) -> Result<(), String> {
+        let messages_json = serde_json::to_value(&session.messages)
+            .map_err(|e| e.to_string())?;
+
+        sqlx::query(
+            "INSERT INTO chat_sessions (id, user_id, title, messages, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5::timestamptz, $6::timestamptz)
+             ON CONFLICT (id) DO UPDATE
+             SET title = EXCLUDED.title,
+                 messages = EXCLUDED.messages,
+                 updated_at = EXCLUDED.updated_at::timestamptz",
+        )
+        .bind(&session.id)
+        .bind(session.user_id)
+        .bind(&session.title)
+        .bind(&messages_json)
+        .bind(&session.created_at)
+        .bind(&session.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    pub async fn get_session(
+        &self,
+        session_id: &str,
+        user_id:    i64,
+    ) -> Result<Option<ChatSession>, String> {
+        let row = sqlx::query(
+            "SELECT id, user_id, title, messages::text,
+                    created_at::text, updated_at::text
+             FROM chat_sessions WHERE id = $1 AND user_id = $2",
+        )
+        .bind(session_id)
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(row.map(|r| {
+            let messages_str: String = r.get("messages");
+            let messages: Vec<ChatMessage> =
+                serde_json::from_str(&messages_str).unwrap_or_default();
+            ChatSession {
+                id:         r.get("id"),
+                user_id:    r.get("user_id"),
+                title:      r.get("title"),
+                messages,
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            }
+        }))
+    }
+
+    pub async fn get_user_sessions(
+        &self,
+        user_id: i64,
+    ) -> Result<Vec<SessionListItem>, String> {
+        let rows = sqlx::query(
+            "SELECT id, title, messages::text, updated_at::text
+             FROM chat_sessions
+             WHERE user_id = $1
+             ORDER BY updated_at DESC LIMIT 50",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.iter().map(|r| {
+            let messages_str: String = r.get("messages");
+            let messages: Vec<ChatMessage> =
+                serde_json::from_str(&messages_str).unwrap_or_default();
+            SessionListItem {
+                id:            r.get("id"),
+                title:         r.get("title"),
+                updated_at:    r.get("updated_at"),
+                message_count: messages.len(),
+            }
+        }).collect())
+    }
+
+    pub async fn delete_session(
+        &self,
+        session_id: &str,
+        user_id:    i64,
+    ) -> Result<bool, String> {
+        let res = sqlx::query(
+            "DELETE FROM chat_sessions WHERE id = $1 AND user_id = $2"
+        )
+        .bind(session_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn delete_sessions_batch(
+        &self,
+        session_ids: &[String],
+        user_id:     i64,
+    ) -> Result<usize, String> {
+        // ANY($1) lebih efisien daripada loop
+        let res = sqlx::query(
+            "DELETE FROM chat_sessions WHERE id = ANY($1) AND user_id = $2"
+        )
+        .bind(session_ids)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(res.rows_affected() as usize)
+    }
+
+    pub async fn rename_session(
+        &self,
+        session_id: &str,
+        user_id:    i64,
+        title:      &str,
+    ) -> Result<bool, String> {
+        let res = sqlx::query(
+            "UPDATE chat_sessions
+             SET title = $1, updated_at = NOW()
+             WHERE id = $2 AND user_id = $3",
+        )
+        .bind(title)
+        .bind(session_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn cleanup_old_sessions(&self, days: i64) -> Result<u64> {
+        let res = sqlx::query(
+            "DELETE FROM chat_sessions
+             WHERE updated_at < NOW() - ($1::bigint * INTERVAL '1 day')"
+        )
+        .bind(days)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+
+    // ════════════════════════════════════════════════════════════
+    //  API KEYS
+    // ════════════════════════════════════════════════════════════
+
+    /// Buat API key baru. key_prefix = 8 char awal key (untuk lookup),
+    /// key_hash = argon2/bcrypt hash dari full key (untuk verifikasi).
+    pub async fn create_api_key(
+        &self,
+        user_id:     i64,
+        key_prefix:  &str,
+        key_hash:    &str,
+        name:        &str,
+        permissions: &[&str],
+        rate_limit:  i32,
+        expires_at:  Option<&str>,
+    ) -> Result<i64, String> {
+        let perms = serde_json::to_value(permissions)
+            .map_err(|e| e.to_string())?;
+
+        let row = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO api_keys
+                (user_id, key_prefix, key_hash, name, permissions, rate_limit, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz)
+             RETURNING id",
+        )
+        .bind(user_id)
+        .bind(key_prefix)
+        .bind(key_hash)
+        .bind(name)
+        .bind(&perms)
+        .bind(rate_limit)
+        .bind(expires_at)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("Gagal membuat API key: {}", e))?;
+
+        Ok(row)
+    }
+
+    pub async fn get_api_keys(&self, user_id: i64) -> Result<Vec<ApiKeyInfo>, String> {
+        let rows = sqlx::query(
+            "SELECT id, key_prefix, name, permissions::text, rate_limit, is_active,
+                    last_used_at::text, created_at::text, expires_at::text
+             FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.iter().map(|r| {
+            let perms_str: String = r.get("permissions");
+            let permissions: Vec<String> =
+                serde_json::from_str(&perms_str).unwrap_or_default();
+            ApiKeyInfo {
+                id:           r.get("id"),
+                key_prefix:   r.get("key_prefix"),
+                name:         r.get("name"),
+                permissions,
+                rate_limit:   r.get::<i32, _>("rate_limit") as i64,
+                is_active:    r.get("is_active"),
+                last_used_at: r.try_get("last_used_at").ok().flatten(),
+                created_at:   r.get("created_at"),
+                expires_at:   r.try_get("expires_at").ok().flatten(),
+            }
+        }).collect())
+    }
+
+    /// Lookup berdasarkan prefix, kembalikan data untuk verifikasi hash.
+    /// Returns: (key_id, user_id, key_hash, permissions_json, rate_limit)
+    pub async fn lookup_api_key(
+        &self,
+        key_prefix: &str,
+    ) -> Result<Option<(i64, i64, String, String, i32)>, String> {
+        let row = sqlx::query(
+            "SELECT id, user_id, key_hash, permissions::text, rate_limit, expires_at
+             FROM api_keys
+             WHERE key_prefix = $1 AND is_active = TRUE",
+        )
+        .bind(key_prefix)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let Some(r) = row else { return Ok(None) };
+
+        // Cek expiry
+        let expires: Option<String> = r.try_get("expires_at").ok().flatten();
+        if let Some(exp_str) = expires {
+            if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&exp_str) {
+                if exp < Utc::now() {
+                    return Ok(None); // sudah expired
+                }
+            }
+        }
+
+        Ok(Some((
+            r.get("id"),
+            r.get("user_id"),
+            r.get("key_hash"),
+            r.get("permissions"),
+            r.get("rate_limit"),
+        )))
+    }
+
+    pub async fn touch_api_key(&self, key_id: i64) -> Result<()> {
+        sqlx::query(
+            "UPDATE api_keys SET last_used_at = NOW() WHERE id = $1"
+        )
+        .bind(key_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn revoke_api_key(&self, key_id: i64, user_id: i64) -> Result<bool, String> {
+        let res = sqlx::query(
+            "UPDATE api_keys SET is_active = FALSE WHERE id = $1 AND user_id = $2"
+        )
+        .bind(key_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(res.rows_affected() > 0)
+    }
+
+
+    // ════════════════════════════════════════════════════════════
+    //  UTILITIES
+    // ════════════════════════════════════════════════════════════
+
+    pub async fn document_exists(&self, file_hash: &str) -> Result<bool, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT 1 FROM documents WHERE file_hash = $1 LIMIT 1"
+        )
+        .bind(file_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some())
+    }
+
+    pub async fn list_categories(&self) -> Result<Vec<String>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT category FROM documents ORDER BY category"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(|r| r.get::<String, _>("category")).collect())
+    }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+//  PRIVATE HELPERS
+// ══════════════════════════════════════════════════════════════════
+
+fn rows_to_results(rows: Vec<sqlx::postgres::PgRow>) -> Vec<SearchResult> {
+    rows.into_iter()
+        .map(|row| {
+            let content: String = row.get("content");
+            SearchResult {
+                title:       row.get("title"),
+                snippet:     truncate_at_sentence(&content, 400),
+                content,
+                category:    row.get("category"),
+                subcategory: row.get("subcategory"),
+                source_url:  row.get("source_url"),
+                page_number: row.try_get("page_number").ok().flatten(),
+                chunk_index: row.try_get("chunk_index").ok().flatten(),
+                score:       row.get("score"),
+            }
+        })
+        .collect()
+}
+
+fn row_to_user(row: &sqlx::postgres::PgRow) -> User {
+    User {
+        id:            row.get("id"),
+        email:         row.get("email"),
+        password_hash: row.get("password_hash"),
+        display_name:  row.get("display_name"),
+        role:          row.get("role"),
+        is_active:     row.get("is_active"),
+        created_at:    row.get("created_at"),
+        updated_at:    row.get("updated_at"),
+    }
+}
+
+/// Truncate string di batas kalimat (. ! ?) terdekat sebelum max_chars.
+/// Fallback ke hard cut jika tidak ada batas kalimat.
+fn truncate_at_sentence(text: &str, max_chars: usize) -> String {
+    let char_count = text.chars().count();
+    if char_count <= max_chars {
+        return text.to_string();
+    }
+
+    // Ambil max_chars karakter dulu
+    let truncated: String = text.chars().take(max_chars).collect();
+
+    // Cari batas kalimat terakhir (., !, ?, \n) di 40% akhir window
+    let search_from = (max_chars as f32 * 0.6) as usize;
+    let search_zone: String = truncated.chars().skip(search_from).collect();
+
+    if let Some(pos) = search_zone.rfind(|c: char| matches!(c, '.' | '!' | '?' | '\n')) {
+        let cut = search_from + pos + 1;
+        let result: String = truncated.chars().take(cut).collect();
+        return result.trim_end().to_string();
+    }
+
+    // Fallback: cut di batas kata terakhir
+    if let Some(pos) = truncated.rfind(' ') {
+        return format!("{}...", &truncated[..pos]);
+    }
+
+    format!("{}...", truncated)
+}
