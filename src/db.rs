@@ -465,11 +465,11 @@ impl Database {
         ).fetch_one(&self.pool).await?;
 
         let avg_results: f64 = sqlx::query_scalar(
-            "SELECT COALESCE(AVG(num_results), 0) FROM query_logs"
+            "SELECT COALESCE(AVG(num_results), 0)::float8 FROM query_logs"
         ).fetch_one(&self.pool).await?;
 
         let avg_search_time_ms: f64 = sqlx::query_scalar(
-            "SELECT COALESCE(AVG(search_time_ms), 0) FROM query_logs"
+            "SELECT COALESCE(AVG(search_time_ms), 0)::float8 FROM query_logs"
         ).fetch_one(&self.pool).await?;
 
         let zero_result_queries: i64 = sqlx::query_scalar(
@@ -1026,4 +1026,170 @@ fn truncate_at_sentence(text: &str, max_chars: usize) -> String {
     }
 
     format!("{}...", truncated)
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  ADMIN MODELS
+// ══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, serde::Serialize)]
+pub struct AdminUser {
+    pub id:           i64,
+    pub email:        String,
+    pub display_name: String,
+    pub role:         String,
+    pub is_active:    bool,
+    pub created_at:   String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct AdminSession {
+    pub id:            String,
+    pub user_id:       i64,
+    pub user_email:    String,
+    pub title:         String,
+    pub message_count: i64,
+    pub updated_at:    String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct AdminDocument {
+    pub document_id:   String,
+    pub title:         String,
+    pub document_type: String,
+    pub category:      String,
+    pub source_url:    String,
+    pub chunk_count:   i64,
+}
+
+impl Database {
+    // ════════════════════════════════════════════════════════════
+    //  ADMIN — USER MANAGEMENT
+    // ════════════════════════════════════════════════════════════
+
+    pub async fn admin_list_users(&self) -> Result<Vec<AdminUser>, String> {
+        let rows = sqlx::query(
+            "SELECT id, email, COALESCE(display_name,'') as display_name,
+                    COALESCE(role,'user') as role, is_active, created_at::text
+             FROM users ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.iter().map(|r| AdminUser {
+            id:           r.get("id"),
+            email:        r.get("email"),
+            display_name: r.get("display_name"),
+            role:         r.get("role"),
+            is_active:    r.get("is_active"),
+            created_at:   r.get("created_at"),
+        }).collect())
+    }
+
+    pub async fn admin_set_role(&self, user_id: i64, role: &str) -> Result<(), String> {
+        sqlx::query("UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2")
+            .bind(role)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn admin_set_active(&self, user_id: i64, active: bool) -> Result<(), String> {
+        sqlx::query("UPDATE users SET is_active = $1, updated_at = NOW() WHERE id = $2")
+            .bind(active)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  ADMIN — SESSIONS
+    // ════════════════════════════════════════════════════════════
+
+    pub async fn admin_list_sessions(&self) -> Result<Vec<AdminSession>, String> {
+        let rows = sqlx::query(
+            "SELECT s.id,
+                    s.user_id,
+                    COALESCE(u.email, '') as user_email,
+                    COALESCE(s.title, '') as title,
+                    COALESCE(
+                        jsonb_array_length(
+                            CASE jsonb_typeof(s.messages::jsonb)
+                                WHEN 'array' THEN s.messages::jsonb
+                                ELSE '[]'::jsonb
+                            END
+                        ), 0
+                    )::bigint as message_count,
+                    COALESCE(s.updated_at::text, '') as updated_at
+             FROM chat_sessions s
+             LEFT JOIN users u ON u.id = s.user_id
+             ORDER BY s.updated_at DESC NULLS LAST
+             LIMIT 200"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.iter().map(|r| AdminSession {
+            id:            r.get("id"),
+            user_id:       r.get("user_id"),
+            user_email:    r.get("user_email"),
+            title:         r.get("title"),
+            message_count: r.get("message_count"),
+            updated_at:    r.get("updated_at"),
+        }).collect())
+    }
+
+    pub async fn admin_delete_session(&self, session_id: &str) -> Result<bool, String> {
+        let res = sqlx::query("DELETE FROM chat_sessions WHERE id = $1")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  ADMIN — DOCUMENTS
+    // ════════════════════════════════════════════════════════════
+
+    pub async fn admin_list_documents(&self) -> Result<Vec<AdminDocument>, String> {
+        let rows = sqlx::query(
+            "SELECT document_id,
+                    COALESCE(MIN(title),'') as title,
+                    COALESCE(MIN(document_type),'') as document_type,
+                    COALESCE(MIN(category),'') as category,
+                    COALESCE(MIN(source_url),'') as source_url,
+                    COUNT(*) as chunk_count
+             FROM documents
+             GROUP BY document_id
+             ORDER BY MIN(category), document_id"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.iter().map(|r| AdminDocument {
+            document_id:   r.get("document_id"),
+            title:         r.get("title"),
+            document_type: r.get("document_type"),
+            category:      r.get("category"),
+            source_url:    r.get("source_url"),
+            chunk_count:   r.get("chunk_count"),
+        }).collect())
+    }
+
+    pub async fn admin_delete_document(&self, document_id: &str) -> Result<u64, String> {
+        let res = sqlx::query("DELETE FROM documents WHERE document_id = $1")
+            .bind(document_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
 }

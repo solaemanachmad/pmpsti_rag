@@ -173,8 +173,18 @@ async fn main() -> std::io::Result<()> {
                     .route("/keys",       web::get().to(handlers::list_api_keys))
                     .route("/keys",       web::post().to(handlers::create_api_key_handler))
                     .route("/keys/{id}",  web::delete().to(handlers::revoke_api_key_handler))
-                    // Admin
-                    .route("/admin/stats", web::get().to(handlers::query_stats))
+                    // Admin — stats
+                    .route("/admin/stats",             web::get().to(handlers::query_stats))
+                    // Admin — users
+                    .route("/admin/users",             web::get().to(handlers::admin_list_users))
+                    .route("/admin/users/{id}/role",   web::patch().to(handlers::admin_set_user_role))
+                    .route("/admin/users/{id}/active", web::patch().to(handlers::admin_toggle_user))
+                    // Admin — sessions
+                    .route("/admin/sessions",          web::get().to(handlers::admin_list_sessions))
+                    .route("/admin/sessions/{id}",     web::delete().to(handlers::admin_delete_session))
+                    // Admin — documents
+                    .route("/admin/documents",         web::get().to(handlers::admin_list_documents))
+                    .route("/admin/documents/{id}",    web::delete().to(handlers::admin_delete_document))
             )
     })
     .bind(&addr)?

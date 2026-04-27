@@ -44,3 +44,5 @@ You can preview the production build with `npm run preview`.
 
 
 podman exec -it pmpsti-db psql -U admin -d postgres
+\l
+\c pmpsti_rag

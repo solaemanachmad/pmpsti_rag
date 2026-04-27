@@ -68,10 +68,40 @@ export const keys = {
 
 // ── Admin ──
 export const admin = {
-  stats: () => request<QueryLogStats>('/admin/stats')
+  stats: () =>
+    request<QueryLogStats>('/admin/stats'),
+
+  // Users
+  listUsers: () =>
+    request<AdminUser[]>('/admin/users'),
+  setRole: (id: number, role: string) =>
+    request<{ message: string }>(`/admin/users/${id}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role })
+    }),
+  toggleActive: (id: number, is_active: boolean) =>
+    request<{ message: string }>(`/admin/users/${id}/active`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_active })
+    }),
+
+  // Sessions
+  listSessions: () =>
+    request<AdminSession[]>('/admin/sessions'),
+  deleteSession: (id: string) =>
+    request(`/admin/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // Documents
+  listDocuments: () =>
+    request<AdminDocument[]>('/admin/documents'),
+  deleteDocument: (document_id: string) =>
+    request<{ deleted_chunks: number }>(
+      `/admin/documents/${encodeURIComponent(document_id)}`,
+      { method: 'DELETE' }
+    )
 };
 
-// ── Streaming ask (word-by-word simulation karena backend belum SSE) ──
+// ── Streaming ask ──
 export function askStream(
   query: string,
   session_id: string | undefined,
@@ -102,37 +132,28 @@ export function askStream(
       }
 
       const json = await res.json();
-      // Backend Actix returns { success: true, data: { answer, session_id, sources, ... } }
-      const data: AskResponse = json?.data ?? json;
+      const data: AskResponse = json.data ?? json;
       if (cancelled) return;
 
-      const answer = data?.answer ?? '';
-      const sid = data?.session_id ?? '';
-      const srcs = data?.sources ?? [];
-      const ms = data?.search_time_ms ?? 0;
-
-      if (!answer) {
-        onError('Jawaban kosong dari server');
-        return;
-      }
-
-      // Stream word-by-word
-      const words = answer.split(' ');
+      const words = data.answer.split(' ');
       for (let i = 0; i < words.length; i++) {
         if (cancelled) return;
         await new Promise(r => setTimeout(r, 25));
         onChunk((i === 0 ? '' : ' ') + words[i]);
       }
-      onDone(srcs, sid, ms);
-    } catch (e: any) {
-      if (e.name !== 'AbortError' && !cancelled) onError(String(e));
+      onDone(data.sources ?? [], data.session_id ?? '', data.search_time_ms ?? 0);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name !== 'AbortError' && !cancelled) onError(String(e));
     }
   })();
 
   return () => { cancelled = true; ctrl.abort(); };
 }
 
-// ── Types ──
+// ══════════════════════════════════════════════════════════════════
+//  TYPES
+// ══════════════════════════════════════════════════════════════════
+
 export interface AuthResponse {
   token: string;
   token_type: string;
@@ -180,7 +201,6 @@ export interface ChatSource {
   category: string;
   score: number;
 }
-
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -214,4 +234,30 @@ export interface QueryLogStats {
   domain_distribution: [string, number][];
   queries_per_day: [string, number][];
   top_queries: [string, number][];
+}
+
+// Admin types
+export interface AdminUser {
+  id: number;
+  email: string;
+  display_name: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+}
+export interface AdminSession {
+  id: string;
+  user_id: number;
+  user_email: string;
+  title: string;
+  message_count: number;
+  updated_at: string;
+}
+export interface AdminDocument {
+  document_id: string;
+  title: string;
+  document_type: string;
+  category: string;
+  source_url: string;
+  chunk_count: number;
 }

@@ -3,31 +3,36 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { chat, askStream } from '$lib/api/client';
-  import type { ChatMessage, SessionListItem, SourceRef, ChatSource } from '$lib/api/client';
+  import type { ChatMessage, ChatSource, SessionListItem, SourceRef } from '$lib/api/client';
   import {
     Send, Plus, Trash2, Pencil, Check, X,
     ChevronDown, FileText, Loader2, MessageSquare
   } from 'lucide-svelte';
 
+  // State
   let sessions: SessionListItem[] = [];
   let activeSessionId: string | undefined;
   let messages: ChatMessage[] = [];
   let streamingText = '';
   let isStreaming = false;
-  let sources: SourceRef[] = [];
-  let showSources = false;
   let query = '';
   let categories: string[] = [];
   let selectedCategory = '';
   let error = '';
+
+  // Rename state
   let renamingId: string | null = null;
   let renameValue = '';
+
   let messagesEl: HTMLDivElement;
+  let inputEl: HTMLTextAreaElement;
   let cancelStream: (() => void) | null = null;
 
   onMount(async () => {
     await loadSessions();
     categories = await chat.categories().catch(() => []);
+
+    // Load session from URL param
     const sid = $page.url.searchParams.get('s');
     if (sid) await loadSession(sid);
   });
@@ -42,17 +47,6 @@
       messages = s.messages;
       activeSessionId = id;
       goto(`/chat?s=${id}`, { replaceState: true });
-
-      // Restore sources dari pesan assistant terakhir
-      const lastAssistant = [...s.messages].reverse().find(m => m.role === 'assistant');
-      if (lastAssistant?.sources?.length) {
-        sources = (lastAssistant.sources ?? []) as any[];
-        showSources = false; // collapsed by default
-      } else {
-        sources = [];
-        showSources = false;
-      }
-
       await scrollBottom();
     } catch { error = 'Gagal memuat sesi'; }
   }
@@ -60,9 +54,7 @@
   function newChat() {
     messages = [];
     activeSessionId = undefined;
-    sources = [];
     streamingText = '';
-    error = '';
     goto('/chat', { replaceState: true });
   }
 
@@ -72,9 +64,7 @@
 
     query = '';
     error = '';
-    sources = [];
-    showSources = false;
-
+    // Tambah pesan user optimistically
     messages = [...messages, { role: 'user', content: q, created_at: new Date().toISOString() }];
     await scrollBottom();
 
@@ -84,38 +74,44 @@
     cancelStream = askStream(
       q,
       activeSessionId,
-      (chunk) => { streamingText += chunk; scrollBottom(); },
+      (chunk) => {
+        streamingText += chunk;
+        scrollBottom();
+      },
       async (srcs, sid, _ms) => {
-        // Simpan pesan assistant ke list
-        messages = [...messages, {
-          role: 'assistant',
-          content: streamingText,
-          created_at: new Date().toISOString(),
-          sources: srcs
-        }];
+        // Selesai streaming
+        messages = [
+          ...messages,
+          {
+            role: 'assistant',
+            content: streamingText,
+            created_at: new Date().toISOString(),
+            sources: srcs as any
+          }
+        ];
         streamingText = '';
         isStreaming = false;
-        sources = srcs;
-        if (srcs.length) showSources = true;
 
-        // Update session id dan refresh sidebar
-        if (sid) {
-          const isNew = sid !== activeSessionId;
+        if (sid && sid !== activeSessionId) {
           activeSessionId = sid;
-          if (isNew) {
-            goto(`/chat?s=${sid}`, { replaceState: true });
-          }
-          // Selalu refresh sessions agar history ter-update
+          goto(`/chat?s=${sid}`, { replaceState: true });
           await loadSessions();
         }
         await scrollBottom();
       },
-      (err) => { error = err; isStreaming = false; streamingText = ''; }
+      (err) => {
+        error = err;
+        isStreaming = false;
+        streamingText = '';
+      }
     );
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
   }
 
   async function deleteSession(id: string) {
@@ -143,30 +139,27 @@
   }
 
   function formatDate(iso: string) {
-    return new Date(iso).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+    const d = new Date(iso);
+    return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
   }
 
-  function showMsgSources(msg: ChatMessage) {
-    if (msg.sources?.length) {
-      sources = msg.sources as any[];
-      showSources = true;
-    }
-  }
-
+  // Auto-resize textarea
   function autoResize(e: Event) {
     const el = e.target as HTMLTextAreaElement;
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 160) + 'px';
   }
+  function getMsgSources(msg: ChatMessage): ChatSource[] {
+    return (msg.sources ?? []) as ChatSource[];
+  }
+
 </script>
 
 <svelte:head><title>Chat — PMPSTI RAG</title></svelte:head>
 
 <div class="flex h-full overflow-hidden">
-
-  <!-- ── Session sidebar ── -->
+  <!-- Session sidebar -->
   <aside class="hidden lg:flex flex-col w-64 border-r bg-card flex-shrink-0">
-
     <div class="p-3 border-b">
       <button on:click={newChat}
         class="flex items-center gap-2 w-full px-3 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity font-medium">
@@ -175,6 +168,7 @@
       </button>
     </div>
 
+    <!-- Category filter -->
     {#if categories.length > 0}
       <div class="px-3 py-2 border-b">
         <select bind:value={selectedCategory}
@@ -187,49 +181,42 @@
       </div>
     {/if}
 
+    <!-- Sessions list -->
     <div class="flex-1 overflow-y-auto p-2 space-y-0.5">
       {#if sessions.length === 0}
         <p class="text-xs text-muted-foreground text-center py-6">Belum ada riwayat chat</p>
       {/if}
-
       {#each sessions as s (s.id)}
-        <!-- Gunakan class biasa, bukan class:hover: yang tidak valid -->
         <div
-          class="group flex items-center gap-1 px-2 py-1.5 rounded-lg cursor-pointer text-sm transition-colors {activeSessionId === s.id ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'}"
+          class="group flex items-center gap-1 px-2 py-1.5 rounded-lg cursor-pointer text-sm transition-colors"
+          class:bg-accent={activeSessionId === s.id}
+          class:text-accent-foreground={activeSessionId === s.id}
+          class:hover:bg-muted={activeSessionId !== s.id}
           on:click={() => loadSession(s.id)}
-          on:keydown={(e) => e.key === 'Enter' && loadSession(s.id)}
-          role="button"
-          tabindex="0"
         >
           {#if renamingId === s.id}
             <input
               bind:value={renameValue}
-              on:keydown={(e) => {
-                if (e.key === 'Enter') saveRename(s.id);
-                if (e.key === 'Escape') renamingId = null;
-              }}
-              on:click|stopPropagation
+              on:keydown={(e) => { if (e.key === 'Enter') saveRename(s.id); if (e.key === 'Escape') renamingId = null; }}
               class="flex-1 text-xs bg-background border rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring min-w-0"
+              on:click|stopPropagation
               autofocus
             />
-            <button on:click|stopPropagation={() => saveRename(s.id)}
-              class="p-0.5 hover:text-primary shrink-0">
+            <button on:click|stopPropagation={() => saveRename(s.id)} class="p-0.5 hover:text-primary shrink-0">
               <Check size={12} />
             </button>
-            <button on:click|stopPropagation={() => renamingId = null}
-              class="p-0.5 hover:text-destructive shrink-0">
+            <button on:click|stopPropagation={() => renamingId = null} class="p-0.5 hover:text-destructive shrink-0">
               <X size={12} />
             </button>
           {:else}
             <MessageSquare size={13} class="shrink-0 text-muted-foreground" />
             <span class="flex-1 truncate text-xs">{s.title || 'Sesi tanpa judul'}</span>
+            <span class="text-xs text-muted-foreground hidden group-hover:hidden shrink-0">{formatDate(s.updated_at)}</span>
             <div class="hidden group-hover:flex items-center gap-0.5 shrink-0">
-              <button on:click|stopPropagation={() => startRename(s)}
-                class="p-0.5 hover:text-primary rounded">
+              <button on:click|stopPropagation={() => startRename(s)} class="p-0.5 hover:text-primary rounded">
                 <Pencil size={11} />
               </button>
-              <button on:click|stopPropagation={() => deleteSession(s.id)}
-                class="p-0.5 hover:text-destructive rounded">
+              <button on:click|stopPropagation={() => deleteSession(s.id)} class="p-0.5 hover:text-destructive rounded">
                 <Trash2 size={11} />
               </button>
             </div>
@@ -239,13 +226,12 @@
     </div>
   </aside>
 
-  <!-- ── Chat area ── -->
+  <!-- Chat area -->
   <div class="flex flex-col flex-1 min-w-0">
-
     <!-- Messages -->
     <div bind:this={messagesEl} class="flex-1 overflow-y-auto px-4 py-6">
-
-      {#if messages.length === 0 && !isStreaming && !streamingText}
+      {#if messages.length === 0 && !isStreaming}
+        <!-- Empty state -->
         <div class="flex flex-col items-center justify-center h-full text-center max-w-md mx-auto">
           <div class="w-12 h-12 rounded-2xl bg-muted flex items-center justify-center mb-4">
             <MessageSquare size={22} class="text-muted-foreground" />
@@ -258,38 +244,86 @@
       {/if}
 
       <div class="max-w-2xl mx-auto space-y-6">
-
         {#each messages as msg (msg.created_at + msg.role)}
           {#if msg.role === 'user'}
             <div class="flex justify-end">
-              <div class="bg-primary text-primary-foreground px-4 py-2.5 rounded-2xl rounded-tr-sm max-w-[80%] text-sm whitespace-pre-wrap">
+              <div class="bg-primary text-primary-foreground px-4 py-2.5 rounded-2xl rounded-tr-sm max-w-[80%] text-sm">
                 {msg.content}
               </div>
             </div>
           {:else}
+            {@const msgSources = getMsgSources(msg)}
             <div class="flex gap-3">
               <div class="w-7 h-7 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
                 <MessageSquare size={13} class="text-muted-foreground" />
               </div>
-              <div class="flex-1">
-                <div class="text-sm leading-relaxed prose-chat">
+              <div class="flex-1 min-w-0">
+                <!-- Jawaban -->
+                <div class="prose-chat text-sm leading-relaxed">
                   {@html msg.content.replace(/\n/g, '<br>')}
                 </div>
-                {#if msg.sources?.length}
-                  <button
-                    on:click={() => showMsgSources(msg)}
-                    class="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <FileText size={11} />
-                    <span>{msg.sources.length} referensi</span>
-                  </button>
+
+                <!-- Referensi per pesan — selalu ada selama sesi hidup atau dimuat ulang -->
+                {#if msgSources.length > 0}
+                  <details class="mt-3 group">
+                    <summary class="flex items-center gap-1.5 text-xs text-muted-foreground
+                                   hover:text-foreground cursor-pointer select-none list-none
+                                   w-fit">
+                      <FileText size={12} />
+                      <span>{msgSources.length} referensi</span>
+                      <span class="transition-transform group-open:rotate-180">
+                        <ChevronDown size={11} />
+                      </span>
+                    </summary>
+                    <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {#each msgSources as src, i}
+                        {@const hasUrl = src.source_url && src.source_url.startsWith('http')}
+                        {@const domain = hasUrl ? (() => { try { return new URL(src.source_url).hostname } catch { return '' } })() : ''}
+                        <div class="rounded-lg border bg-muted/30 text-xs overflow-hidden
+                                    {hasUrl ? 'hover:border-primary/40 transition-colors' : ''}">
+                          <div class="flex items-start justify-between gap-2 px-3 pt-2.5 pb-1">
+                            <span class="font-medium leading-snug line-clamp-2 flex-1">
+                              [{i+1}] {src.title}
+                            </span>
+                            <span class="text-muted-foreground shrink-0 tabular-nums text-[10px]">
+                              {(src.score * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                          <p class="text-muted-foreground line-clamp-2 px-3 pb-1.5 leading-relaxed">
+                            {src.snippet}
+                          </p>
+                          <div class="flex items-center justify-between gap-2 px-3 pb-2">
+                            <span class="bg-background px-1.5 py-0.5 rounded border text-muted-foreground">
+                              {src.category || 'dokumen'}
+                            </span>
+                            {#if hasUrl}
+                              <a href={src.source_url}
+                                 target="_blank"
+                                 rel="noopener noreferrer"
+                                 class="flex items-center gap-1 text-primary hover:underline shrink-0"
+                                 title={src.source_url}>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"
+                                     viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                                  <polyline points="15 3 21 3 21 9"/>
+                                  <line x1="10" y1="14" x2="21" y2="3"/>
+                                </svg>
+                                <span class="max-w-[110px] truncate">{domain}</span>
+                              </a>
+                            {/if}
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  </details>
                 {/if}
               </div>
             </div>
           {/if}
         {/each}
 
-        <!-- Streaming bubble -->
+        <!-- Streaming message -->
         {#if isStreaming || streamingText}
           <div class="flex gap-3">
             <div class="w-7 h-7 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
@@ -301,7 +335,7 @@
             </div>
             <div class="flex-1 text-sm leading-relaxed">
               {#if streamingText}
-                {@html streamingText.replace(/\n/g, '<br>')}
+                <span>{@html streamingText.replace(/\n/g, '<br>')}</span>
                 {#if isStreaming}<span class="cursor-blink"></span>{/if}
               {:else}
                 <span class="text-muted-foreground text-xs">Sedang mencari & menjawab...</span>
@@ -311,53 +345,21 @@
         {/if}
 
         {#if error}
-          <div class="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-3 py-2.5">
+          <div class="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-3 py-2.5 max-w-2xl">
             {error}
           </div>
         {/if}
-
       </div>
     </div>
 
-    <!-- Sources panel -->
-    {#if sources.length > 0}
-      <div class="border-t bg-muted/30">
-        <button
-          on:click={() => showSources = !showSources}
-          class="flex items-center gap-2 w-full px-4 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <FileText size={13} />
-          <span>{sources.length} sumber referensi</span>
-          <!-- Fix: gunakan class string interpolation, bukan class: pada komponen -->
-          <span class="ml-auto transition-transform {showSources ? 'rotate-180' : ''}">
-            <ChevronDown size={13} />
-          </span>
-        </button>
 
-        {#if showSources}
-          <div class="px-4 pb-3 grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto">
-            {#each sources as src, i}
-              <div class="bg-background rounded-lg border p-3 text-xs">
-                <div class="flex items-start justify-between gap-2 mb-1">
-                  <span class="font-medium line-clamp-1">[{i+1}] {src.title}</span>
-                  <span class="text-muted-foreground shrink-0">{(src.score * 100).toFixed(0)}%</span>
-                </div>
-                <p class="text-muted-foreground line-clamp-2 mb-1.5">{src.snippet}</p>
-                <span class="inline-block bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
-                  {src.category}
-                </span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/if}
 
     <!-- Input -->
     <div class="border-t p-4 bg-background">
       <div class="max-w-2xl mx-auto">
         <div class="flex items-end gap-2 border rounded-xl bg-card px-3 py-2 focus-within:ring-2 focus-within:ring-ring transition-shadow">
           <textarea
+            bind:this={inputEl}
             bind:value={query}
             on:keydown={handleKeydown}
             on:input={autoResize}
@@ -371,18 +373,13 @@
             disabled={!query.trim() || isStreaming}
             class="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-primary text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
           >
-            {#if isStreaming}
-              <Loader2 size={14} class="animate-spin" />
-            {:else}
-              <Send size={14} />
-            {/if}
+            <Send size={14} />
           </button>
         </div>
         <p class="text-xs text-muted-foreground mt-1.5 text-center">
-          Enter kirim · Shift+Enter baris baru
+          Enter untuk kirim · Shift+Enter untuk baris baru
         </p>
       </div>
     </div>
-
   </div>
 </div>

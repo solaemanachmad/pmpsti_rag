@@ -225,6 +225,67 @@ pub async fn update_password(
 //  RAG / CHAT HANDLERS
 // ══════════════════════════════════════════════════════════════════
 
+
+// ══════════════════════════════════════════════════════════════════
+//  FILTER SOURCES — dynamic relevance filtering
+// ══════════════════════════════════════════════════════════════════
+
+/// Filter chunks hasil retrieval menjadi referensi yang benar-benar relevan.
+///
+/// Strategi (berurutan):
+/// 1. Score threshold  — buang chunk dengan score < min_score
+/// 2. Score gap        — potong jika ada drop > gap_ratio antara chunk berurutan
+/// 3. Dedup per source — satu source_url hanya muncul sekali (chunk terbaik)
+/// 4. Max cap          — paling banyak max_sources referensi
+fn filter_sources(
+    chunks: &[crate::db::SearchResult],
+    min_score:   f64,
+    gap_ratio:   f64,
+    max_sources: usize,
+) -> Vec<&crate::db::SearchResult> {
+    if chunks.is_empty() {
+        return vec![];
+    }
+
+    // 1. Score threshold
+    let above: Vec<&crate::db::SearchResult> = chunks.iter()
+        .filter(|c| c.score >= min_score)
+        .collect();
+
+    if above.is_empty() {
+        // Fallback: kembalikan chunk terbaik saja (daripada kosong)
+        return vec![&chunks[0]];
+    }
+
+    // 2. Score gap — cari titik drop pertama yang signifikan
+    let mut cutoff = above.len();
+    for i in 1..above.len() {
+        let prev = above[i - 1].score;
+        let curr = above[i].score;
+        if prev > 0.0 && (prev - curr) / prev > gap_ratio {
+            cutoff = i;
+            break;
+        }
+    }
+    let filtered: Vec<&crate::db::SearchResult> = above[..cutoff].to_vec();
+
+    // 3. Dedup per source_url (ambil score tertinggi per URL)
+    let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let deduped: Vec<&crate::db::SearchResult> = filtered.into_iter()
+        .filter(|c| {
+            let key = if c.source_url.is_empty() {
+                c.title.clone()
+            } else {
+                c.source_url.clone()
+            };
+            seen_urls.insert(key)
+        })
+        .collect();
+
+    // 4. Max cap
+    deduped.into_iter().take(max_sources).collect()
+}
+
 pub async fn ask(
     req:   HttpRequest,
     state: web::Data<AppState>,
@@ -263,7 +324,7 @@ pub async fn ask(
     }).collect();
 
     let search_mode = body.search_mode.as_deref().unwrap_or("hybrid");
-    let top_k       = body.top_k.unwrap_or(5);
+    let top_k       = body.top_k.unwrap_or(8);  // fetch lebih banyak, lalu filter
     let cat_filter  = body.category_filter.as_deref();
 
     let start = std::time::Instant::now();
@@ -282,7 +343,11 @@ pub async fn ask(
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
-    // Simpan ke session
+    // Filter chunks → hanya referensi yang benar-benar relevan
+    // min_score=0.45, gap_ratio=0.25, max=5
+    let relevant = filter_sources(&chunks, 0.45, 0.25, 5);
+
+    // Simpan ke session (gunakan relevant chunks saja)
     let now = Utc::now().to_rfc3339();
     session.messages.push(ChatMessage {
         role:       "user".to_string(),
@@ -294,7 +359,7 @@ pub async fn ask(
         role:       "assistant".to_string(),
         content:    answer.clone(),
         created_at: now.clone(),
-        sources:    chunks.iter().map(|c| ChatSource {
+        sources:    relevant.iter().map(|c| ChatSource {
             title:      c.title.clone(),
             snippet:    c.snippet.clone(),
             source_url: c.source_url.clone(),
@@ -312,7 +377,7 @@ pub async fn ask(
         &body.query,
         "id",
         cat_filter.unwrap_or(""),
-        chunks.len() as i32,
+        relevant.len() as i32,
         top_score,
         elapsed_ms as i64,
         Some(&session_id),
@@ -320,7 +385,7 @@ pub async fn ask(
     ).await;
 
     // Build sources
-    let sources: Vec<SourceRef> = chunks.iter().map(|c| SourceRef {
+    let sources: Vec<SourceRef> = relevant.iter().map(|c| SourceRef {
         title:      c.title.clone(),
         snippet:    c.snippet.clone(),
         source_url: c.source_url.clone(),
@@ -490,4 +555,116 @@ pub async fn health() -> HttpResponse {
         "status": "ok",
         "service": "pmpsti-rag-api"
     }))
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  ADMIN — USER MANAGEMENT
+// ══════════════════════════════════════════════════════════════════
+
+pub async fn admin_list_users(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    match state.db.admin_list_users().await {
+        Ok(users) => HttpResponse::Ok().json(ApiSuccess::new(users)),
+        Err(e)    => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+pub async fn admin_set_user_role(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<i64>,
+    body:  web::Json<serde_json::Value>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    let role = body.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+    match state.db.admin_set_role(path.into_inner(), role).await {
+        Ok(_)  => HttpResponse::Ok().json(ApiSuccess::new("Role diperbarui")),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+pub async fn admin_toggle_user(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<i64>,
+    body:  web::Json<serde_json::Value>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    let active = body.get("is_active").and_then(|v| v.as_bool()).unwrap_or(true);
+    match state.db.admin_set_active(path.into_inner(), active).await {
+        Ok(_)  => HttpResponse::Ok().json(ApiSuccess::new("Status user diperbarui")),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  ADMIN — CHAT SESSIONS
+// ══════════════════════════════════════════════════════════════════
+
+pub async fn admin_list_sessions(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    match state.db.admin_list_sessions().await {
+        Ok(sessions) => HttpResponse::Ok().json(ApiSuccess::new(sessions)),
+        Err(e)       => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+pub async fn admin_delete_session(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<String>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    match state.db.admin_delete_session(&path.into_inner()).await {
+        Ok(true)  => HttpResponse::Ok().json(ApiSuccess::new("Session dihapus")),
+        Ok(false) => HttpResponse::NotFound().json(ApiError::new(404, "Session tidak ditemukan")),
+        Err(e)    => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  ADMIN — DOCUMENTS
+// ══════════════════════════════════════════════════════════════════
+
+pub async fn admin_list_documents(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    match state.db.admin_list_documents().await {
+        Ok(docs) => HttpResponse::Ok().json(ApiSuccess::new(docs)),
+        Err(e)   => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+pub async fn admin_delete_document(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<String>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    match state.db.admin_delete_document(&path.into_inner()).await {
+        Ok(n)  => HttpResponse::Ok().json(ApiSuccess::new(
+            serde_json::json!({ "deleted_chunks": n })
+        )),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
 }
