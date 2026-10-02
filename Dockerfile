@@ -1,6 +1,4 @@
 # ── Stage 1: Builder ──────────────────────────────────────────────
-# ubuntu:24.04 ships glibc 2.39, satisfying ort-sys prebuilt ONNX Runtime
-# which requires __isoc23_strtol / __isoc23_strtoll (added in glibc 2.38)
 FROM ubuntu:24.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -31,7 +29,10 @@ COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────
-FROM debian:bookworm-slim
+# Must match builder's glibc — ubuntu:24.04 has glibc 2.39
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \

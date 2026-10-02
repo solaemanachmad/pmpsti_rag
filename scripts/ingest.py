@@ -98,8 +98,8 @@ print("[INFO] Model siap.\n")
 #  DATABASE
 # ══════════════════════════════════════════════════════════════════
 
-def connect_db():
-    conn = psycopg2.connect(DB_URL)
+def connect_db(url=None):
+    conn = psycopg2.connect(url or DB_URL)
     conn.cursor().execute("CREATE EXTENSION IF NOT EXISTS vector;")
     conn.commit()
     register_vector(conn)
@@ -1551,7 +1551,7 @@ def main():
     logger.info("  Auto-kategori: aktif (URL-based, dapat di-override)")
     logger.info("=" * 55)
 
-    conn = connect_db()
+    conn = connect_db(args.db)
     setup_database(conn)
     splitters = build_splitters()
 
