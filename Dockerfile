@@ -1,14 +1,22 @@
 # ── Stage 1: Builder ──────────────────────────────────────────────
-FROM rust:1.88-slim AS builder
+# ubuntu:24.04 ships glibc 2.39, satisfying ort-sys prebuilt ONNX Runtime
+# which requires __isoc23_strtol / __isoc23_strtoll (added in glibc 2.38)
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
+    curl \
     pkg-config \
     libssl-dev \
     libopenblas-dev \
     cmake \
     g++ \
-    libstdc++-12-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Rust 1.88 via rustup
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.88.0 --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /app
 
