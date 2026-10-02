@@ -8,6 +8,24 @@
     Send, Plus, Trash2, Pencil, Check, X,
     ChevronDown, FileText, Loader2, MessageSquare
   } from 'lucide-svelte';
+  import { marked } from 'marked';
+  import DOMPurify from 'dompurify';
+
+  // Konfigurasi marked: render [1] jadi superscript
+  marked.use({
+    renderer: {
+      paragraph(token) {
+        // Konversi [1] [2] [3] di akhir kalimat jadi superscript
+        const text = (token.text || '').replace(/\[(\d+)\]/g, '<sup class="citation-ref">[$1]</sup>');
+        return `<p>${text}</p>`;
+      }
+    }
+  });
+
+  function renderMarkdown(text: string): string {
+    const raw = marked.parse(text) as string;
+    return DOMPurify.sanitize(raw, { ADD_ATTR: ['target', 'rel'] });
+  }
 
   // State
   let sessions: SessionListItem[] = [];
@@ -155,7 +173,7 @@
 
 </script>
 
-<svelte:head><title>Chat — PMPSTI RAG</title></svelte:head>
+<svelte:head><title>Tanya PMPSTI</title></svelte:head>
 
 <div class="flex h-full overflow-hidden">
   <!-- Session sidebar -->
@@ -188,10 +206,7 @@
       {/if}
       {#each sessions as s (s.id)}
         <div
-          class="group flex items-center gap-1 px-2 py-1.5 rounded-lg cursor-pointer text-sm transition-colors"
-          class:bg-accent={activeSessionId === s.id}
-          class:text-accent-foreground={activeSessionId === s.id}
-          class:hover:bg-muted={activeSessionId !== s.id}
+          class="group flex items-center gap-1 px-2 py-1.5 rounded-lg cursor-pointer text-sm transition-colors {activeSessionId === s.id ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'}"
           on:click={() => loadSession(s.id)}
         >
           {#if renamingId === s.id}
@@ -260,62 +275,54 @@
               <div class="flex-1 min-w-0">
                 <!-- Jawaban -->
                 <div class="prose-chat text-sm leading-relaxed">
-                  {@html msg.content.replace(/\n/g, '<br>')}
+                  {@html renderMarkdown(msg.content)}
                 </div>
 
-                <!-- Referensi per pesan — selalu ada selama sesi hidup atau dimuat ulang -->
+                <!-- Referensi — inline chips, expand ke list -->
                 {#if msgSources.length > 0}
-                  <details class="mt-3 group">
+                  <details class="mt-2.5 group">
                     <summary class="flex items-center gap-1.5 text-xs text-muted-foreground
-                                   hover:text-foreground cursor-pointer select-none list-none
-                                   w-fit">
-                      <FileText size={12} />
-                      <span>{msgSources.length} referensi</span>
-                      <span class="transition-transform group-open:rotate-180">
-                        <ChevronDown size={11} />
-                      </span>
+                                   hover:text-foreground cursor-pointer select-none list-none w-fit">
+                      <FileText size={11} />
+                      <span>{msgSources.length} sumber</span>
+                      <ChevronDown size={11} class="transition-transform group-open:rotate-180" />
                     </summary>
-                    <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+
+                    <!-- Expanded: daftar baris tipis -->
+                    <ol class="mt-2 space-y-1.5">
                       {#each msgSources as src, i}
                         {@const hasUrl = src.source_url && src.source_url.startsWith('http')}
-                        {@const domain = hasUrl ? (() => { try { return new URL(src.source_url).hostname } catch { return '' } })() : ''}
-                        <div class="rounded-lg border bg-muted/30 text-xs overflow-hidden
-                                    {hasUrl ? 'hover:border-primary/40 transition-colors' : ''}">
-                          <div class="flex items-start justify-between gap-2 px-3 pt-2.5 pb-1">
-                            <span class="font-medium leading-snug line-clamp-2 flex-1">
-                              [{i+1}] {src.title}
-                            </span>
-                            <span class="text-muted-foreground shrink-0 tabular-nums text-[10px]">
-                              {(src.score * 100).toFixed(0)}%
-                            </span>
-                          </div>
-                          <p class="text-muted-foreground line-clamp-2 px-3 pb-1.5 leading-relaxed">
-                            {src.snippet}
-                          </p>
-                          <div class="flex items-center justify-between gap-2 px-3 pb-2">
-                            <span class="bg-background px-1.5 py-0.5 rounded border text-muted-foreground">
-                              {src.category || 'dokumen'}
-                            </span>
+                        {@const domain = hasUrl ? (() => { try { return new URL(src.source_url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''}
+                        <li class="flex items-start gap-2 text-xs">
+                          <!-- Nomor -->
+                          <span class="shrink-0 w-4 h-4 rounded-full bg-muted text-muted-foreground
+                                       flex items-center justify-center text-[10px] font-medium mt-0.5">
+                            {i + 1}
+                          </span>
+                          <div class="flex-1 min-w-0">
                             {#if hasUrl}
                               <a href={src.source_url}
                                  target="_blank"
                                  rel="noopener noreferrer"
-                                 class="flex items-center gap-1 text-primary hover:underline shrink-0"
-                                 title={src.source_url}>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"
-                                     viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                                  <polyline points="15 3 21 3 21 9"/>
-                                  <line x1="10" y1="14" x2="21" y2="3"/>
-                                </svg>
-                                <span class="max-w-[110px] truncate">{domain}</span>
+                                 class="font-medium text-foreground hover:text-primary hover:underline
+                                        line-clamp-1 leading-snug">
+                                {src.title || domain}
                               </a>
+                            {:else}
+                              <span class="font-medium text-foreground line-clamp-1 leading-snug">
+                                {src.title}
+                              </span>
+                            {/if}
+                            <p class="text-muted-foreground line-clamp-1 leading-relaxed mt-0.5">
+                              {src.snippet}
+                            </p>
+                            {#if domain}
+                              <span class="text-[10px] text-muted-foreground/70">{domain}</span>
                             {/if}
                           </div>
-                        </div>
+                        </li>
                       {/each}
-                    </div>
+                    </ol>
                   </details>
                 {/if}
               </div>
@@ -335,7 +342,7 @@
             </div>
             <div class="flex-1 text-sm leading-relaxed">
               {#if streamingText}
-                <span>{@html streamingText.replace(/\n/g, '<br>')}</span>
+                <span>{@html renderMarkdown(streamingText)}</span>
                 {#if isStreaming}<span class="cursor-blink"></span>{/if}
               {:else}
                 <span class="text-muted-foreground text-xs">Sedang mencari & menjawab...</span>

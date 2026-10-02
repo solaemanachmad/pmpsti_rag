@@ -123,7 +123,7 @@ impl Database {
         sqlx::query("
             CREATE TABLE IF NOT EXISTS documents (
                 id            SERIAL PRIMARY KEY,
-                document_id   TEXT,
+                document_id   TEXT NOT NULL,
                 title         TEXT,
                 content       TEXT,
                 document_type TEXT,
@@ -133,7 +133,9 @@ impl Database {
                 file_hash     TEXT DEFAULT '',
                 embedding     vector(768),
                 page_number   INTEGER,
-                chunk_index   INTEGER
+                chunk_index   INTEGER,
+                created_at    TIMESTAMPTZ DEFAULT NOW(),
+                updated_at    TIMESTAMPTZ DEFAULT NOW()
             )
         ").execute(&self.pool).await?;
 
@@ -146,6 +148,24 @@ impl Database {
         sqlx::query("
             CREATE INDEX IF NOT EXISTS documents_fts_idx
             ON documents USING gin (to_tsvector('indonesian', content))
+        ").execute(&self.pool).await?;
+
+        // Unique index per chunk (document_id + chunk_index)
+        sqlx::query("
+            CREATE UNIQUE INDEX IF NOT EXISTS documents_doc_chunk_key
+            ON documents(document_id, chunk_index)
+        ").execute(&self.pool).await?;
+
+        // Index kategori untuk filter
+        sqlx::query("
+            CREATE INDEX IF NOT EXISTS documents_category_idx
+            ON documents(category, subcategory)
+        ").execute(&self.pool).await?;
+
+        // Index source_url untuk lookup
+        sqlx::query("
+            CREATE INDEX IF NOT EXISTS documents_source_url_idx
+            ON documents(source_url)
         ").execute(&self.pool).await?;
 
         // Users
@@ -227,14 +247,33 @@ impl Database {
             ON query_logs(detected_language)
         ").execute(&self.pool).await?;
 
+
+        // Guest quotas (public chat, no auth)
+        sqlx::query("
+            CREATE TABLE IF NOT EXISTS guest_quotas (
+                guest_token TEXT PRIMARY KEY,
+                ask_count   INTEGER DEFAULT 0,
+                last_ask_at TIMESTAMPTZ DEFAULT NOW(),
+                created_at  TIMESTAMPTZ DEFAULT NOW()
+            )
+        ").execute(&self.pool).await?;
+
         // ── Safe migrations: tambah kolom baru kalau belum ada ──
         // (PostgreSQL 9.6+ mendukung ADD COLUMN IF NOT EXISTS)
         let migrations = [
+            // Users
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT DEFAULT ''",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user'",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
+            // Query logs
             "ALTER TABLE query_logs ADD COLUMN IF NOT EXISTS user_id BIGINT",
             "ALTER TABLE query_logs ADD COLUMN IF NOT EXISTS detected_domain TEXT DEFAULT ''",
+            // Documents — safe migration untuk DB yang sudah ada
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()",
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
+            "CREATE UNIQUE INDEX IF NOT EXISTS documents_doc_chunk_key ON documents(document_id, chunk_index)",
+            "CREATE INDEX IF NOT EXISTS documents_category_idx ON documents(category, subcategory)",
+            "CREATE INDEX IF NOT EXISTS documents_source_url_idx ON documents(source_url)",
         ];
 
         for sql in &migrations {
@@ -1192,4 +1231,43 @@ impl Database {
             .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
+    // ════════════════════════════════════════════════════════════
+    //  GUEST QUOTA — public chat tanpa auth (maks 5 pertanyaan)
+    // ════════════════════════════════════════════════════════════
+
+    /// Return ask_count for given guest_token (0 if new)
+    pub async fn guest_ask_count(&self, token: &str) -> i32 {
+        let row = sqlx::query(
+            "SELECT ask_count FROM guest_quotas WHERE guest_token = $1"
+        )
+        .bind(token)
+        .fetch_optional(&self.pool)
+        .await;
+
+        match row {
+            Ok(Some(r)) => r.get::<i32, _>("ask_count"),
+            _ => 0,
+        }
+    }
+
+    /// Increment ask_count. Returns new count.
+    pub async fn guest_increment(&self, token: &str) -> i32 {
+        let row = sqlx::query(
+            "INSERT INTO guest_quotas (guest_token, ask_count, last_ask_at)
+             VALUES ($1, 1, NOW())
+             ON CONFLICT (guest_token)
+             DO UPDATE SET ask_count = guest_quotas.ask_count + 1,
+                           last_ask_at = NOW()
+             RETURNING ask_count"
+        )
+        .bind(token)
+        .fetch_one(&self.pool)
+        .await;
+
+        match row {
+            Ok(r) => r.get::<i32, _>("ask_count"),
+            Err(_) => 0,
+        }
+    }
+
 }

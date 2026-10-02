@@ -140,6 +140,3 @@
   </div>
 </div>
 
-<style>
-  .input { @apply w-full px-3 py-2 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-ring transition-shadow; }
-</style>

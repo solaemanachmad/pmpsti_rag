@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: pmpsti-rag
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false          # Set manually in Render dashboard
+      - key: LLM_API_KEY
+        sync: false          # Set manually in Render dashboard
+      - key: JWT_SECRET
+        sync: false          # Set manually in Render dashboard
+      - key: LLM_BACKEND
+        value: openai        # Use OpenAI-compatible endpoint (Gemini)
+      - key: LLM_MODEL
+        value: gemini-2.0-flash
+      - key: LLM_API_URL
+        value: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: "7860"
+      - key: RUST_LOG
+        value: info

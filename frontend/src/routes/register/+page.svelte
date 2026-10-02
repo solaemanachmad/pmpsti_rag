@@ -77,7 +77,3 @@
   </div>
 </div>
 
-<style>
-  .input { @apply w-full px-3 py-2 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-ring transition-shadow; }
-  .btn-primary { @apply flex items-center justify-center bg-primary text-primary-foreground text-sm font-medium px-4 py-2 rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity; }
-</style>

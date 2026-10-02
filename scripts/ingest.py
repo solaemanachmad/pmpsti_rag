@@ -18,6 +18,9 @@ Cara pakai:
 """
 
 import argparse
+import json
+import logging
+import logging.handlers
 import hashlib
 import io
 import os
@@ -109,7 +112,7 @@ def setup_database(conn):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS documents (
             id            SERIAL PRIMARY KEY,
-            document_id   TEXT,
+            document_id   TEXT NOT NULL,
             title         TEXT,
             content       TEXT,
             document_type TEXT,
@@ -119,7 +122,9 @@ def setup_database(conn):
             file_hash     TEXT DEFAULT '',
             embedding     vector(768),
             page_number   INTEGER,
-            chunk_index   INTEGER
+            chunk_index   INTEGER,
+            created_at    TIMESTAMPTZ DEFAULT NOW(),
+            updated_at    TIMESTAMPTZ DEFAULT NOW()
         );
     """)
     cursor.execute("""
@@ -130,6 +135,35 @@ def setup_database(conn):
         CREATE INDEX IF NOT EXISTS documents_fts_idx
         ON documents USING gin (to_tsvector('indonesian', content));
     """)
+    # Index tambahan untuk performa incremental ingest
+    # UNIQUE pada (document_id, chunk_index) karena 1 dokumen = banyak chunks
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS documents_doc_chunk_key
+        ON documents(document_id, chunk_index);
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS documents_category_idx
+        ON documents(category, subcategory);
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS documents_source_url_idx
+        ON documents(source_url);
+    """)
+    # Safe migrations untuk database yang sudah ada
+    migrations = [
+        "ALTER TABLE documents ALTER COLUMN document_id SET NOT NULL",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
+        "CREATE UNIQUE INDEX IF NOT EXISTS documents_doc_chunk_key ON documents(document_id, chunk_index)",
+        "CREATE INDEX IF NOT EXISTS documents_category_idx ON documents(category, subcategory)",
+        "CREATE INDEX IF NOT EXISTS documents_source_url_idx ON documents(source_url)",
+    ]
+    for sql in migrations:
+        try:
+            cursor.execute(sql)
+        except Exception as e:
+            conn.rollback()
+            print(f"[WARN] Migration skipped: {e}")
     conn.commit()
     cursor.close()
     print("[INFO] Database schema & index ready.")
@@ -176,11 +210,16 @@ def bulk_insert(conn, records: list[list]):
     insert_query = """
         INSERT INTO documents
             (document_id, title, content, document_type, source_url,
-             category, subcategory, file_hash, embedding, page_number, chunk_index)
+             category, subcategory, file_hash, embedding, page_number, chunk_index,
+             created_at, updated_at)
         VALUES %s
     """
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc)
+    # Append created_at dan updated_at ke setiap record
+    records_with_ts = [list(r) + [now, now] for r in records]
     with conn.cursor() as cur:
-        execute_values(cur, insert_query, records)
+        execute_values(cur, insert_query, records_with_ts)
     conn.commit()
 
 
@@ -546,6 +585,10 @@ class SiteCrawler:
             sitemap_candidates += [
                 f"{self.base_url}/sitemap.xml",
                 f"{self.base_url}/sitemap-index.xml",
+                f"{self.base_url}/wp-sitemap.xml",        # WordPress 5.5+
+                f"{self.base_url}/news-sitemap.xml",      # Yoast News
+                f"{self.base_url}/page-sitemap.xml",      # Yoast Pages
+                f"{self.base_url}/post-sitemap.xml",      # Yoast Posts
             ]
 
         for sm_url in sitemap_candidates:
@@ -851,7 +894,7 @@ class QmdCrawler:
 
             rel = qmd_file.relative_to(self.source_dir)
             # Buat URL konsisten dengan hasil render
-            url = self.base_url + "/" + str(rel).as_posix().replace(".qmd", ".html")
+            url = self.base_url + "/" + rel.as_posix().replace(".qmd", ".html")
             url = url.replace("/index.html", "")
 
             try:
@@ -985,8 +1028,226 @@ def site_id_from_url(base_url: str) -> str:
 
 def url_to_document_id(url: str, base_url: str) -> str:
     rel = url.replace(base_url, "").strip("/")
-    rel = re.sub(r"[^\w/\-]", "", rel)
+    # Buang ekstensi .html/.qmd sebelum sanitasi karakter
+    rel = re.sub(r"\.(html|qmd)$", "", rel)
+    # Hanya izinkan huruf, angka, slash, strip, underscore
+    rel = re.sub(r"[^\w/\-]", "_", rel)
+    rel = rel.strip("_/")
     return rel or "index"
+
+
+
+# ══════════════════════════════════════════════════════════════════
+#  LOGGING SETUP
+# ══════════════════════════════════════════════════════════════════
+
+def setup_logging(log_dir: str = "logs") -> logging.Logger:
+    """Konfigurasi logging ke stdout dan ke file logs/ingest_YYYYMMDD.log."""
+    from datetime import datetime
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f"ingest_{datetime.now().strftime('%Y%m%d')}.log")
+
+    logger = logging.getLogger("ingest")
+    logger.setLevel(logging.DEBUG)
+
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+
+    # Console handler
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(fmt)
+
+    # File handler (rotating, 10 MB, 5 backup)
+    fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=10_000_000, backupCount=5, encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(fmt)
+
+    if not logger.handlers:
+        logger.addHandler(ch)
+        logger.addHandler(fh)
+
+    logger.info(f"Log file: {os.path.abspath(log_file)}")
+    return logger
+
+
+# ══════════════════════════════════════════════════════════════════
+#  CHECKPOINT (resume crawl)
+# ══════════════════════════════════════════════════════════════════
+
+def checkpoint_path(base_url: str) -> str:
+    """Buat nama file checkpoint dari base_url."""
+    site_slug = re.sub(r"[^\w]", "_", base_url)[:60]
+    return os.path.join("logs", f"checkpoint_{site_slug}.json")
+
+
+def load_checkpoint(base_url: str) -> dict:
+    """Muat checkpoint jika ada.  Format: {url: {hash, status}}."""
+    path = checkpoint_path(base_url)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_checkpoint(base_url: str, data: dict):
+    """Simpan checkpoint ke file JSON."""
+    os.makedirs("logs", exist_ok=True)
+    path = checkpoint_path(base_url)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def clear_checkpoint(base_url: str):
+    """Hapus checkpoint setelah ingest selesai."""
+    path = checkpoint_path(base_url)
+    if os.path.exists(path):
+        os.remove(path)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  AUTO-KATEGORI BERDASARKAN URL PATH
+# ══════════════════════════════════════════════════════════════════
+#
+#  Aturan dicocokkan dari atas ke bawah — PERTAMA yang cocok menang.
+#  Untuk site baru, tambahkan entri di SITE_CATEGORY_RULES dengan
+#  key = domain (atau substring URL), value = list rule.
+#
+#  Format tiap rule: (regex_path, category, subcategory)
+#  Regex dicocokkan ke path+slug URL (case-insensitive).
+# ══════════════════════════════════════════════════════════════════
+
+# Aturan generik yang berlaku untuk semua situs
+_GENERIC_RULES: list[tuple[str, str, str]] = [
+    # ── Pendaftaran & Admisi ──────────────────────────────────────
+    (r"pendaftaran|admisi|registrasi|seleksi|daftar",
+     "pendaftaran", "prosedur"),
+
+    # ── Beasiswa ─────────────────────────────────────────────────
+    (r"beasiswa.*(dalam|lokal|domestik)|dalam.negeri",
+     "keuangan", "beasiswa_dalam_negeri"),
+    (r"beasiswa.*(luar|internasional|asing)|luar.negeri",
+     "keuangan", "beasiswa_luar_negeri"),
+    (r"beasiswa",
+     "keuangan", "beasiswa"),
+
+    # ── Biaya / Keuangan ─────────────────────────────────────────
+    (r"ukt|biaya.studi|biaya.kuliah|spp|keuangan",
+     "keuangan", "biaya"),
+
+    # ── Kurikulum & Program Studi ─────────────────────────────────
+    (r"kurikulum|mata.kuliah|silabus|rps",
+     "akademik", "kurikulum"),
+    (r"program.studi|magister|doktor|s2|s3|prodi",
+     "akademik", "program_studi"),
+
+    # ── Tesis / Disertasi ─────────────────────────────────────────
+    (r"tesis|disertasi|tugas.akhir|ujian.pra|pendadaran|wisuda",
+     "akademik", "tesis"),
+
+    # ── Kalender / Jadwal ─────────────────────────────────────────
+    (r"kalender|jadwal|semester|akademik",
+     "akademik", "jadwal"),
+
+    # ── Penelitian & Publikasi ────────────────────────────────────
+    (r"jurnal|publikasi|paper|konferensi|seminar|riset|penelitian",
+     "penelitian", "publikasi"),
+
+    # ── SDM — Dosen & Staff ───────────────────────────────────────
+    (r"dosen|tenaga.pendidik|pengajar|pembimbing|promotor",
+     "sdm", "dosen"),
+    (r"staff|tenaga.kependidikan|pegawai",
+     "sdm", "staff"),
+
+    # ── Fasilitas ─────────────────────────────────────────────────
+    (r"fasilitas|laboratorium|lab|perpustakaan|sarana",
+     "informasi", "fasilitas"),
+
+    # ── Profil / Tentang ─────────────────────────────────────────
+    (r"profil|tentang|sejarah|visi|misi|akreditasi|about",
+     "informasi", "profil"),
+
+    # ── Pengumuman / Berita ───────────────────────────────────────
+    (r"pengumuman|announcement|berita|news|agenda|event|kegiatan",
+     "informasi", "berita"),
+
+    # ── Layanan Akademik ─────────────────────────────────────────
+    (r"layanan|pelayanan|dokumen|surat.keterangan|legalisir",
+     "akademik", "layanan"),
+
+    # ── Alumni ───────────────────────────────────────────────────
+    (r"alumni|lulusan|tracer",
+     "informasi", "alumni"),
+
+    # ── Internasional ─────────────────────────────────────────────
+    (r"international|foreign|global|oia|kerjasama",
+     "informasi", "internasional"),
+]
+
+# Override khusus per domain — didahulukan sebelum aturan generik
+# Key: substring yang ada di URL (domain atau path prefix unik)
+SITE_CATEGORY_RULES: dict[str, list[tuple[str, str, str]]] = {
+    "pasca.jteti.ugm.ac.id": [
+        # Slug WordPress /YYYY/MM/DD/ → ekstrak dari slug judul
+        # Aturan tambahan spesifik situs ini jika diperlukan
+        (r"category/beasiswa_dalam_negeri", "keuangan", "beasiswa_dalam_negeri"),
+        (r"category/beasiswa_luar_negeri",  "keuangan", "beasiswa_luar_negeri"),
+        (r"category/pengumuman",            "informasi", "berita"),
+        (r"privacy.policy",                 "informasi", "profil"),
+        # WordPress /YYYY/MM/DD/slug → tangkap slug
+        (r"\d{4}/\d{2}/\d{2}/.*beasiswa",  "keuangan",   "beasiswa"),
+        (r"\d{4}/\d{2}/\d{2}/.*pendaftaran|prosedur", "pendaftaran", "prosedur"),
+        (r"\d{4}/\d{2}/\d{2}/.*program.studi|magister|doktor", "akademik", "program_studi"),
+        (r"\d{4}/\d{2}/\d{2}/.*tesis|ujian|wisuda",  "akademik", "tesis"),
+    ],
+    # ── Tambahkan situs baru di sini ──────────────────────────────
+    # "example.ugm.ac.id": [
+    #     (r"/khusus/path", "kategori", "subkategori"),
+    # ],
+}
+
+
+def auto_category(url: str, default_cat: str = "informasi", default_subcat: str = "umum") -> tuple[str, str]:
+    """
+    Tentukan (category, subcategory) dari URL secara otomatis.
+
+    Urutan pencocokan:
+    1. Override spesifik per domain (SITE_CATEGORY_RULES)
+    2. Aturan generik (_GENERIC_RULES)
+    3. Fallback ke (default_cat, default_subcat)
+
+    Parameter:
+        url          : URL lengkap halaman
+        default_cat  : fallback category jika tidak ada yang cocok
+        default_subcat: fallback subcategory
+
+    Contoh:
+        auto_category("https://pasca.jteti.ugm.ac.id/beasiswa-dalam-negeri/")
+        → ("keuangan", "beasiswa_dalam_negeri")
+
+        auto_category("https://pasca.jteti.ugm.ac.id/2022/10/12/program-studi-magister/")
+        → ("akademik", "program_studi")
+    """
+    url_lower = url.lower()
+
+    # 1. Cek override per domain
+    for domain, rules in SITE_CATEGORY_RULES.items():
+        if domain in url_lower:
+            for pattern, cat, subcat in rules:
+                if re.search(pattern, url_lower):
+                    return cat, subcat
+            break  # domain cocok tapi tidak ada rule yang match → lanjut ke generik
+
+    # 2. Aturan generik
+    for pattern, cat, subcat in _GENERIC_RULES:
+        if re.search(pattern, url_lower):
+            return cat, subcat
+
+    # 3. Fallback
+    return default_cat, default_subcat
+
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1057,70 +1318,129 @@ def process_site(
     category: str, subcategory: str,
     doc_type: str, splitters: tuple,
     force: bool = False,
+    logger: "logging.Logger | None" = None,
 ):
+    """
+    Ingest halaman satu per satu (incremental).
+    - Setiap URL punya document_id sendiri.
+    - Hash per halaman: skip jika tidak berubah.
+    - Checkpoint: simpan progres, bisa lanjut jika putus.
+    - Logging: ke stdout dan ke file logs/ingest_*.log.
+    """
+    if logger is None:
+        logger = logging.getLogger("ingest")
+
     pages_processed = 0
     pages_skipped   = 0
+    pages_error     = 0
 
-    # Satu document_id untuk seluruh site
-    site_id    = site_id_from_url(base_url)
-    site_hash  = ""   # akan di-update setelah semua halaman diproses
+    # Muat checkpoint sebelumnya (resume jika ada)
+    checkpoint = load_checkpoint(base_url)
+    if checkpoint and not force:
+        done_urls = {u for u, v in checkpoint.items() if v.get("status") == "ok"}
+        logger.info(f"[resume] Melanjutkan crawl — {len(done_urls)} halaman sudah diproses sebelumnya")
+    else:
+        done_urls = set()
+        if force:
+            checkpoint = {}
 
-    # Hapus data lama dulu (jika ada) sebelum re-ingest
-    existing = get_existing_hash(conn, site_id)
-    if existing and not force:
-        print(f"  [info] Site '{site_id}' sudah ada. Pakai --force untuk re-ingest.")
-        return 0, 0
-    if existing:
-        print(f"  [update] Hapus data lama '{site_id}'...")
-        delete_document(conn, site_id)
-
-    print(f"  [info] document_id = '{site_id}'  (semua halaman site ini)")
-
-    all_texts   = []
-    all_records = []
+    logger.info(f"[site] Mulai crawl: {base_url}  (force={force})")
 
     for url, soup in crawler.crawl():
-        meta    = extract_site_meta(soup, url)
-        md_text = extract_site_markdown(soup)
-        md_text = clean_markdown(md_text)
-        md_text = pre_process_tables(md_text)
-        md_text = enrich_text(md_text)
-
-        if len(md_text.strip()) < 50:
-            print(f"  [skip] Konten terlalu pendek: {url}")
+        # Lewati halaman yang sudah diproses di run sebelumnya
+        if url in done_urls:
+            logger.debug(f"  [checkpoint-skip] {url}")
+            pages_skipped += 1
             continue
 
-        # Sisipkan judul halaman sebagai H1
-        if meta["title"]:
-            md_text = "# " + meta["title"] + "\n\n" + md_text
+        try:
+            meta    = extract_site_meta(soup, url)
+            md_text = extract_site_markdown(soup)
+            md_text = clean_markdown(md_text)
+            md_text = pre_process_tables(md_text)
+            md_text = enrich_text(md_text)
 
-        content_hash = text_hash_md5(md_text)
-        site_hash   += content_hash  # akumulasi hash
+            if len(md_text.strip()) < 50:
+                logger.info(f"  [skip] Konten terlalu pendek: {url}")
+                pages_skipped += 1
+                checkpoint[url] = {"status": "skip", "reason": "too_short"}
+                save_checkpoint(base_url, checkpoint)
+                continue
 
-        page_path = url.replace(base_url, "").strip("/") or "index"
-        print(f"  Chunking: {page_path}")
-        final_chunks = markdown_to_chunks(md_text, splitters)
-        print(f"    {len(final_chunks)} chunks  |  source: {url}")
+            # Sisipkan judul halaman sebagai H1
+            if meta["title"]:
+                md_text = "# " + meta["title"] + "\n\n" + md_text
 
-        # document_id = site_id, source_url = URL halaman spesifik
-        texts, records = chunks_to_records(
-            final_chunks, site_id, doc_type, url,
-            category, subcategory, text_hash_md5(md_text)
-        )
-        all_texts.extend(texts)
-        all_records.extend(records)
-        pages_processed += 1
+            content_hash = text_hash_md5(md_text)
 
-    # Embed & insert semua sekaligus (lebih efisien)
-    if all_texts:
-        print(f"\n  Total: {len(all_texts)} chunks dari {pages_processed} halaman")
-        embed_and_insert(conn, all_texts, all_records)
+            # document_id = per URL (bukan per site)
+            doc_id = url_to_document_id(url, base_url)
+
+            # Auto-kategori jika category/subcategory tidak di-set eksplisit
+            eff_category    = category
+            eff_subcategory = subcategory
+            if not eff_category:
+                eff_category, eff_subcategory = auto_category(url)
+                logger.debug(f"    auto-category: {eff_category}/{eff_subcategory}")
+            elif not eff_subcategory:
+                _, eff_subcategory = auto_category(url, default_subcat="umum")
+                logger.debug(f"    auto-subcategory: {eff_subcategory}")
+
+            # Cek hash di database — skip jika sama dan tidak --force
+            existing_hash = get_existing_hash(conn, doc_id)
+            if existing_hash == content_hash and not force:
+                logger.info(f"  [unchanged] {doc_id}")
+                pages_skipped += 1
+                checkpoint[url] = {"status": "ok", "hash": content_hash}
+                save_checkpoint(base_url, checkpoint)
+                continue
+
+            # Hapus data lama untuk doc_id ini sebelum re-insert
+            if existing_hash is not None:
+                delete_document(conn, doc_id)
+                logger.info(f"  [update] {doc_id}")
+            else:
+                logger.info(f"  [new] {doc_id}")
+
+            page_path = url.replace(base_url, "").strip("/") or "index"
+            logger.debug(f"    Chunking: {page_path}")
+            final_chunks = markdown_to_chunks(md_text, splitters)
+            logger.info(f"    {len(final_chunks)} chunks  |  source: {url}")
+
+            texts, records = chunks_to_records(
+                final_chunks, doc_id, doc_type, url,
+                eff_category, eff_subcategory, content_hash
+            )
+
+            embed_and_insert(conn, texts, records)
+            pages_processed += 1
+
+            # Simpan checkpoint setelah berhasil
+            checkpoint[url] = {"status": "ok", "hash": content_hash}
+            save_checkpoint(base_url, checkpoint)
+
+        except KeyboardInterrupt:
+            logger.warning(f"  [interrupt] Proses dihentikan manual. Checkpoint disimpan.")
+            save_checkpoint(base_url, checkpoint)
+            raise
+
+        except Exception as exc:
+            pages_error += 1
+            logger.error(f"  [error] {url}: {exc}")
+            checkpoint[url] = {"status": "error", "error": str(exc)}
+            save_checkpoint(base_url, checkpoint)
+            # Lanjut ke halaman berikutnya
+
+    if pages_error > 0:
+        logger.warning(f"[site] Selesai: {pages_processed} diproses, {pages_skipped} dilewati, {pages_error} error")
+        logger.warning(f"  Jalankan lagi tanpa --force untuk retry halaman yang error")
+    else:
+        logger.info(f"[site] Selesai: {pages_processed} diproses, {pages_skipped} dilewati")
+        clear_checkpoint(base_url)  # hapus checkpoint jika semua berhasil
 
     return pages_processed, pages_skipped
 
 
-# ══════════════════════════════════════════════════════════════════
-#  MAIN
 # ══════════════════════════════════════════════════════════════════
 
 
@@ -1130,24 +1450,16 @@ def process_qmd(
     doc_type: str, splitters: tuple,
     force: bool = False,
 ):
-    """Ingest dari file .qmd source langsung."""
-    processed   = 0
-    skipped     = 0
-    site_id     = site_id_from_url(crawler.base_url)
-    all_texts   = []
-    all_records = []
-
-    existing = get_existing_hash(conn, site_id)
-    if existing and not force:
-        print(f"  [info] QMD '{site_id}' sudah ada. Pakai --force untuk re-ingest.")
-        return 0, 0
-    if existing:
-        print(f"  [update] Hapus data lama '{site_id}'...")
-        delete_document(conn, site_id)
-
-    print(f"  [info] document_id = '{site_id}'")
+    """Ingest dari file .qmd source langsung — setiap file = document_id sendiri."""
+    processed = 0
+    skipped   = 0
 
     for url, md_text, stem in crawler.crawl():
+        # document_id unik per file: path relatif dari base_url
+        doc_id = url_to_document_id(url, crawler.base_url)
+        if not doc_id or doc_id == "index":
+            doc_id = stem  # fallback ke nama file
+
         md_text = clean_markdown(md_text)
         md_text = pre_process_tables(md_text)
         md_text = enrich_text(md_text)
@@ -1161,23 +1473,33 @@ def process_qmd(
             title_str = stem.replace("_", " ").replace("-", " ").title()
             md_text = "# " + title_str + "\n\n" + md_text
 
-        print(f"  Chunking: {stem}")
+        content_hash = text_hash_md5(md_text)
+
+        # Cek hash — skip jika tidak berubah dan tidak --force
+        existing_hash = get_existing_hash(conn, doc_id)
+        if existing_hash == content_hash and not force:
+            print(f"  [unchanged] {doc_id}")
+            skipped += 1
+            continue
+        if existing_hash is not None:
+            print(f"  [update] Hapus data lama '{doc_id}'...")
+            delete_document(conn, doc_id)
+        else:
+            print(f"  [new] {doc_id}")
+
+        print(f"  Chunking: {stem}  ->  {doc_id}")
         final_chunks = markdown_to_chunks(md_text, splitters)
         print(f"    {len(final_chunks)} chunks  |  {url}")
 
         texts, records = chunks_to_records(
-            final_chunks, site_id, doc_type, url,
-            category, subcategory, text_hash_md5(md_text)
+            final_chunks, doc_id, doc_type, url,
+            category, subcategory, content_hash
         )
-        all_texts.extend(texts)
-        all_records.extend(records)
+        embed_and_insert(conn, texts, records)
         processed += 1
 
-    if all_texts:
-        print(f"\n  Total: {len(all_texts)} chunks dari {processed} file .qmd")
-        embed_and_insert(conn, all_texts, all_records)
-
     return processed, skipped
+
 
 
 def main():
@@ -1197,8 +1519,12 @@ def main():
                         help="Base URL untuk --qmd-source")
 
     # Metadata site
-    parser.add_argument("--category",      default="",    help="Kategori (untuk site)")
-    parser.add_argument("--subcategory",   default="",    help="Sub-kategori (untuk site)")
+    parser.add_argument("--category",    default="",
+                        help="Kategori dokumen (opsional — jika kosong, ditentukan otomatis dari URL). "
+                             "Contoh: akademik, informasi, keuangan, pendaftaran, penelitian, sdm")
+    parser.add_argument("--subcategory", default="",
+                        help="Sub-kategori (opsional — jika category di-set tapi subcategory kosong, "
+                             "subcategory juga ditentukan otomatis)")
     parser.add_argument("--document-type", default="web", help="Tipe dokumen site (default: web)")
     parser.add_argument("--max-pages",     type=int, default=300)
     parser.add_argument("--js",            action="store_true",
@@ -1213,13 +1539,17 @@ def main():
 
     args = parser.parse_args()
 
-    if not args.files and not args.site_url and not args.site_local:
+    if not args.files and not args.site_url and not args.site_local and not args.qmd_source:
         parser.print_help()
         sys.exit(1)
 
-    print("=" * 55)
-    print("  PMPSTI RAG — Unified Ingest Pipeline")
-    print("=" * 55)
+    # Setup logging (stdout + file)
+    logger = setup_logging()
+
+    logger.info("=" * 55)
+    logger.info("  PMPSTI RAG — Unified Ingest Pipeline")
+    logger.info("  Auto-kategori: aktif (URL-based, dapat di-override)")
+    logger.info("=" * 55)
 
     conn = connect_db()
     setup_database(conn)
@@ -1251,9 +1581,9 @@ def main():
         n, s = process_site(
             conn, crawler, site_url,
             args.category, args.subcategory, args.document_type,
-            splitters, force=args.force
+            splitters, force=args.force, logger=logger
         )
-        print(f"  Site selesai — {n} halaman diproses, {s} di-skip.")
+        logger.info(f"  Site selesai — {n} halaman diproses, {s} di-skip.")
 
     # ── Ingest site lokal ──
     if args.site_local:
@@ -1262,9 +1592,9 @@ def main():
         n, s = process_site(
             conn, crawler, args.site_base_url,
             args.category, args.subcategory, args.document_type,
-            splitters, force=args.force
+            splitters, force=args.force, logger=logger
         )
-        print(f"  Site selesai — {n} halaman diproses, {s} di-skip.")
+        logger.info(f"  Site selesai — {n} halaman diproses, {s} di-skip.")
 
     # ── Ingest dari .qmd source langsung ──
     if args.qmd_source:
@@ -1285,7 +1615,7 @@ def main():
 
     print_db_stats(conn)
     conn.close()
-    print("All done!")
+    logger.info("All done!")
 
 
 if __name__ == "__main__":

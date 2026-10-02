@@ -9,20 +9,26 @@ use crate::search::SearchEngine;
 //  CONFIG
 // ══════════════════════════════════════════════════════════════════
 
-/// Konfigurasi LLM backend — bisa Ollama lokal atau OpenAI-compatible.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LlmProvider {
+    Ollama,
+    OpenAICompatible,
+    Gemini,
+}
+
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
-    pub api_url:   String,   // e.g. "http://localhost:11434/api/chat" (Ollama)
-                             //   atau "https://api.openai.com/v1/chat/completions"
-    pub api_key:   String,   // kosong jika Ollama lokal
-    pub model:     String,   // e.g. "llama3.2", "gpt-4o-mini", "claude-sonnet-4-6"
+    pub provider:   LlmProvider,
+    pub api_url:    String,
+    pub api_key:    String,
+    pub model:      String,
     pub max_tokens: u32,
 }
 
 impl LlmConfig {
-    /// Ollama lokal (default)
     pub fn ollama(model: &str) -> Self {
         Self {
+            provider:   LlmProvider::Ollama,
             api_url:    "http://localhost:11434/api/chat".to_string(),
             api_key:    String::new(),
             model:      model.to_string(),
@@ -30,10 +36,20 @@ impl LlmConfig {
         }
     }
 
-    /// OpenAI-compatible (OpenAI, Groq, Together, dsb.)
     pub fn openai_compatible(api_url: &str, api_key: &str, model: &str) -> Self {
         Self {
+            provider:   LlmProvider::OpenAICompatible,
             api_url:    api_url.to_string(),
+            api_key:    api_key.to_string(),
+            model:      model.to_string(),
+            max_tokens: 2048,
+        }
+    }
+
+    pub fn gemini(api_key: &str, model: &str) -> Self {
+        Self {
+            provider:   LlmProvider::Gemini,
+            api_url:    String::new(),
             api_key:    api_key.to_string(),
             model:      model.to_string(),
             max_tokens: 2048,
@@ -70,7 +86,8 @@ struct Choice {
     message: Message,
 }
 
-// Ollama format (berbeda dari OpenAI)
+// ── Ollama ──────────────────────────────────────────────────────
+
 #[derive(Serialize)]
 struct OllamaChatRequest {
     model:    String,
@@ -90,6 +107,49 @@ struct OllamaChatResponse {
     message: Message,
 }
 
+// ── Gemini ──────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct GeminiRequest {
+    system_instruction: GeminiSystemInstruction,
+    contents:           Vec<GeminiContent>,
+    #[serde(rename = "generationConfig")]
+    generation_config:  GeminiGenerationConfig,
+}
+
+#[derive(Serialize)]
+struct GeminiSystemInstruction {
+    parts: Vec<GeminiPart>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GeminiContent {
+    role:  String,
+    parts: Vec<GeminiPart>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GeminiPart {
+    text: String,
+}
+
+#[derive(Serialize)]
+struct GeminiGenerationConfig {
+    #[serde(rename = "maxOutputTokens")]
+    max_output_tokens: u32,
+    temperature:       f32,
+}
+
+#[derive(Deserialize)]
+struct GeminiResponse {
+    candidates: Vec<GeminiCandidate>,
+}
+
+#[derive(Deserialize)]
+struct GeminiCandidate {
+    content: GeminiContent,
+}
+
 // ══════════════════════════════════════════════════════════════════
 //  RAG ENGINE
 // ══════════════════════════════════════════════════════════════════
@@ -98,33 +158,21 @@ pub struct RagEngine {
     pub search: SearchEngine,
     llm:        LlmConfig,
     http:       Client,
-    is_ollama:  bool,
 }
 
 impl RagEngine {
     pub fn new(search: SearchEngine, llm: LlmConfig) -> Self {
-        let is_ollama = llm.api_url.contains("11434") || llm.api_url.contains("ollama");
-        Self {
-            search,
-            llm,
-            http: Client::new(),
-            is_ollama,
-        }
+        Self { search, llm, http: Client::new() }
     }
 
-    // ════════════════════════════════════════════════════════════
-    //  MAIN: Answer query dengan RAG pipeline
-    //  Returns (answer, sources)
-    // ════════════════════════════════════════════════════════════
     pub async fn answer(
         &self,
         query:           &str,
-        history:         &[Message],        // riwayat chat (bisa kosong)
+        history:         &[Message],
         category_filter: Option<&str>,
-        search_mode:     &str,              // "hybrid" | "semantic" | "keyword"
+        search_mode:     &str,
         top_k:           i64,
     ) -> Result<(String, Vec<SearchResult>)> {
-        // 1. Retrieve chunks
         let chunks = match search_mode {
             "semantic" => self.search.search_semantic(query, top_k, category_filter).await?,
             "keyword"  => self.search.search_keyword(query, top_k, category_filter).await?,
@@ -139,51 +187,35 @@ impl RagEngine {
             ));
         }
 
-        // 2. Build context
         let context = SearchEngine::format_context(&chunks);
-
-        // 3. Build prompt
         let system_prompt = build_system_prompt();
         let user_message  = build_user_message(query, &context);
 
-        // 4. Susun messages: system + history + user baru
         let mut messages: Vec<Message> = vec![
-            Message { role: "system".to_string(), content: system_prompt },
+            Message { role: "system".to_string(), content: system_prompt.clone() },
         ];
-        // Ambil max 6 pesan terakhir dari history (3 giliran) agar tidak overflow context
         let history_window = if history.len() > 6 { &history[history.len() - 6..] } else { history };
         messages.extend_from_slice(history_window);
         messages.push(Message { role: "user".to_string(), content: user_message });
 
-        // 5. Call LLM
-        let answer = if self.is_ollama {
-            self.call_ollama(&messages).await?
-        } else {
-            self.call_openai_compatible(&messages).await?
+        let answer = match self.llm.provider {
+            LlmProvider::Ollama           => self.call_ollama(&messages).await?,
+            LlmProvider::Gemini           => self.call_gemini(&system_prompt, &messages).await?,
+            LlmProvider::OpenAICompatible => self.call_openai_compatible(&messages).await?,
         };
 
         Ok((answer, chunks))
     }
 
-    // ════════════════════════════════════════════════════════════
-    //  CALL OLLAMA
-    // ════════════════════════════════════════════════════════════
     async fn call_ollama(&self, messages: &[Message]) -> Result<String> {
         let req = OllamaChatRequest {
             model:    self.llm.model.clone(),
             messages: messages.to_vec(),
             stream:   false,
-            options:  OllamaOptions {
-                num_predict: self.llm.max_tokens,
-                temperature: 0.3,
-            },
+            options:  OllamaOptions { num_predict: self.llm.max_tokens, temperature: 0.3 },
         };
 
-        let resp = self.http
-            .post(&self.llm.api_url)
-            .json(&req)
-            .send()
-            .await?;
+        let resp = self.http.post(&self.llm.api_url).json(&req).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -195,9 +227,6 @@ impl RagEngine {
         Ok(data.message.content)
     }
 
-    // ════════════════════════════════════════════════════════════
-    //  CALL OPENAI-COMPATIBLE
-    // ════════════════════════════════════════════════════════════
     async fn call_openai_compatible(&self, messages: &[Message]) -> Result<String> {
         let req = ChatRequest {
             model:       self.llm.model.clone(),
@@ -207,10 +236,7 @@ impl RagEngine {
             stream:      false,
         };
 
-        let mut builder = self.http
-            .post(&self.llm.api_url)
-            .json(&req);
-
+        let mut builder = self.http.post(&self.llm.api_url).json(&req);
         if !self.llm.api_key.is_empty() {
             builder = builder.bearer_auth(&self.llm.api_key);
         }
@@ -229,6 +255,54 @@ impl RagEngine {
             .next()
             .map(|c| c.message.content)
             .ok_or_else(|| anyhow::anyhow!("LLM returned empty choices"))
+    }
+
+    async fn call_gemini(&self, system_prompt: &str, messages: &[Message]) -> Result<String> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            self.llm.model, self.llm.api_key
+        );
+
+        // Konversi messages ke format Gemini — skip system (sudah di system_instruction)
+        let contents: Vec<GeminiContent> = messages
+            .iter()
+            .filter(|m| m.role != "system")
+            .map(|m| GeminiContent {
+                role:  if m.role == "assistant" { "model".to_string() } else { "user".to_string() },
+                parts: vec![GeminiPart { text: m.content.clone() }],
+            })
+            .collect();
+
+        if contents.is_empty() {
+            return Err(anyhow::anyhow!("No messages to send to Gemini"));
+        }
+
+        let req = GeminiRequest {
+            system_instruction: GeminiSystemInstruction {
+                parts: vec![GeminiPart { text: system_prompt.to_string() }],
+            },
+            contents,
+            generation_config: GeminiGenerationConfig {
+                max_output_tokens: self.llm.max_tokens,
+                temperature:       0.3,
+            },
+        };
+
+        let resp = self.http.post(&url).json(&req).send().await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body   = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Gemini API error {}: {}", status, body));
+        }
+
+        let data: GeminiResponse = resp.json().await?;
+        data.candidates
+            .into_iter()
+            .next()
+            .and_then(|c| c.content.parts.into_iter().next())
+            .map(|p| p.text)
+            .ok_or_else(|| anyhow::anyhow!("Gemini returned empty response"))
     }
 }
 

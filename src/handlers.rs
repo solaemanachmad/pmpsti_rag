@@ -324,7 +324,7 @@ pub async fn ask(
     }).collect();
 
     let search_mode = body.search_mode.as_deref().unwrap_or("hybrid");
-    let top_k       = body.top_k.unwrap_or(8);  // fetch lebih banyak, lalu filter
+    let top_k       = body.top_k.unwrap_or(10); // fetch lebih banyak, filter di filter_sources  // fetch lebih banyak, lalu filter
     let cat_filter  = body.category_filter.as_deref();
 
     let start = std::time::Instant::now();
@@ -344,8 +344,8 @@ pub async fn ask(
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
     // Filter chunks → hanya referensi yang benar-benar relevan
-    // min_score=0.45, gap_ratio=0.25, max=5
-    let relevant = filter_sources(&chunks, 0.45, 0.25, 5);
+    // min_score=0.40 (sedikit lebih lebar), gap_ratio=0.25, max=6
+    let relevant = filter_sources(&chunks, 0.40, 0.25, 6);
 
     // Simpan ke session (gunakan relevant chunks saja)
     let now = Utc::now().to_rfc3339();
@@ -399,6 +399,86 @@ pub async fn ask(
         sources,
         search_time_ms: elapsed_ms,
     }))
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+//  PUBLIC ASK — tanpa auth, maks GUEST_QUOTA pertanyaan per token
+// ══════════════════════════════════════════════════════════════════
+
+const GUEST_QUOTA: i32 = 5;
+
+pub async fn ask_public(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    body:  web::Json<AskRequest>,
+) -> HttpResponse {
+    // Guest token dari header X-Guest-Token
+    let guest_token = req
+        .headers()
+        .get("X-Guest-Token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    if guest_token.is_empty() {
+        return HttpResponse::BadRequest()
+            .json(ApiError::new(400, "X-Guest-Token header diperlukan"));
+    }
+
+    // Cek quota
+    let count = state.db.guest_ask_count(&guest_token).await;
+    if count >= GUEST_QUOTA {
+        return HttpResponse::TooManyRequests()
+            .json(ApiError::new(429, format!(
+                "Batas {} pertanyaan untuk tamu telah habis. Silakan daftar atau masuk.",
+                GUEST_QUOTA
+            )));
+    }
+
+    if body.query.trim().is_empty() {
+        return HttpResponse::BadRequest()
+            .json(ApiError::new(400, "Query tidak boleh kosong"));
+    }
+
+    let search_mode = body.search_mode.as_deref().unwrap_or("hybrid");
+    let top_k       = body.top_k.unwrap_or(5);
+
+    let start = std::time::Instant::now();
+
+    let (answer, chunks) = match state.rag.answer(
+        &body.query,
+        &[],            // no history for guests
+        None,
+        search_mode,
+        top_k,
+    ).await {
+        Ok(r)  => r,
+        Err(e) => return HttpResponse::InternalServerError()
+            .json(ApiError::new(500, format!("Gagal mendapat jawaban: {}", e))),
+    };
+
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    let relevant   = filter_sources(&chunks, 0.45, 0.25, 5);
+
+    // Increment setelah berhasil menjawab
+    let new_count = state.db.guest_increment(&guest_token).await;
+
+    let sources: Vec<SourceRef> = relevant.iter().map(|c| SourceRef {
+        title:      c.title.clone(),
+        snippet:    c.snippet.clone(),
+        source_url: c.source_url.clone(),
+        category:   c.category.clone(),
+        score:      c.score,
+    }).collect();
+
+    HttpResponse::Ok().json(ApiSuccess::new(serde_json::json!({
+        "answer":          answer,
+        "sources":         sources,
+        "search_time_ms":  elapsed_ms,
+        "questions_used":  new_count,
+        "questions_left":  (GUEST_QUOTA - new_count).max(0),
+    })))
 }
 
 // ── Session management ──

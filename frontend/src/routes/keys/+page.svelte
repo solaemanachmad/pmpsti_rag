@@ -189,10 +189,7 @@
                 <td class="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell">{formatDate(k.created_at)}</td>
                 <td class="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell">{formatDate(k.last_used_at)}</td>
                 <td class="px-4 py-3">
-                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                    class:bg-green-100={k.is_active} class:text-green-700={k.is_active}
-                    class:dark:bg-green-900={k.is_active} class:dark:text-green-300={k.is_active}
-                    class:bg-muted={!k.is_active} class:text-muted-foreground={!k.is_active}>
+                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium {k.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' : 'bg-muted text-muted-foreground'}">
                     {k.is_active ? 'Aktif' : 'Nonaktif'}
                   </span>
                 </td>
@@ -213,6 +210,3 @@
   </div>
 </div>
 
-<!-- <style>
-  .input { @apply w-full px-3 py-2 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-ring transition-shadow; }
-</style> -->

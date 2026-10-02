@@ -1,0 +1,12 @@
+target/
+.env
+.env.*
+scripts/.venv/
+scripts/logs/
+scripts/__pycache__/
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+*.sql
+*.log
+.git/

@@ -1,48 +1,239 @@
-# sv
+# PMPSTI RAG
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+Sistem Retrieval-Augmented Generation (RAG) untuk dokumen akademik PMPSTI, dibangun dengan Rust (Actix-web) + SvelteKit + PostgreSQL + pgvector.
 
-## Creating a project
+---
 
-If you're seeing this, you've probably already done this step. Congrats!
+## Arsitektur
 
-```sh
-# create a new project
-npx sv create my-app
+```
+Frontend (SvelteKit :5173)
+    ↕ /api/* proxy
+Backend Rust (Actix-web :8080)
+    ↕ SQLx
+PostgreSQL + pgvector (:5432)   ←   Python ingest pipeline
 ```
 
-To recreate this project with the same configuration:
+---
 
-```sh
-# recreate this project
-npx sv@0.15.0 create --template minimal --types ts --add prettier eslint tailwindcss="plugins:typography,forms" --install npm ./
+## Prasyarat
+
+- [Podman](https://podman.io/) — untuk menjalankan PostgreSQL
+- [Rust + Cargo](https://rustup.rs/) — untuk backend
+- [Node.js 18+](https://nodejs.org/) — untuk frontend
+- [Python 3.10+](https://python.org/) — untuk ingest dokumen (opsional)
+
+---
+
+## 1. Jalankan Database (PostgreSQL + pgvector)
+
+### Pertama kali (buat container baru)
+
+```powershell
+podman run -d `
+  --name pmpsti-db `
+  -e POSTGRES_USER=admin `
+  -e POSTGRES_PASSWORD=admin `
+  -e POSTGRES_DB=pmpsti_rag `
+  -p 5432:5432 `
+  docker.io/pgvector/pgvector:pg16
 ```
 
-## Developing
+### Selanjutnya (start container yang sudah ada)
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+```powershell
+podman start pmpsti-db
+```
 
-```sh
+### Cek status
+
+```powershell
+podman ps
+```
+
+### Aktifkan extension pgvector (sekali saja)
+
+```powershell
+podman exec -it pmpsti-db psql -U admin -d pmpsti_rag -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
+
+---
+
+## 2. Konfigurasi Environment
+
+Salin `.env.example` menjadi `.env` di root project, lalu sesuaikan:
+
+```env
+# Database
+DATABASE_URL=postgres://admin:admin@localhost:5432/pmpsti_rag
+
+# JWT
+JWT_SECRET=ganti-dengan-secret-yang-kuat
+
+# LLM Backend — pilih salah satu:
+
+# Ollama (lokal)
+LLM_BACKEND=ollama
+LLM_API_URL=http://localhost:11434/api/chat
+LLM_MODEL=csalab/sahabatai1:llama3_base_Q4_K_M
+LLM_MAX_TOKENS=2048
+
+# Groq (cloud, cepat)
+# LLM_BACKEND=openai
+# LLM_API_URL=https://api.groq.com/openai/v1/chat/completions
+# LLM_API_KEY=gsk_...
+# LLM_MODEL=llama-3.3-70b-versatile
+# LLM_MAX_TOKENS=2048
+```
+
+---
+
+## 3. Jalankan Backend Rust
+
+```powershell
+cd C:\Users\achsoe\Developments\pmpsti_rag
+cargo run
+```
+
+Tunggu hingga muncul:
+
+```
+Server listening on 0.0.0.0:8080
+AI model loaded successfully.
+```
+
+> Saat pertama kali dijalankan, fastembed akan mengunduh model `multilingual-e5-base` (~500 MB). Proses ini hanya terjadi sekali — model di-cache di folder `.fastembed_cache/`.
+
+---
+
+## 4. Jalankan Frontend SvelteKit
+
+Buka **terminal baru** (jangan tutup terminal backend):
+
+```powershell
+cd C:\Users\achsoe\Developments\pmpsti_rag\frontend
+npm install        # hanya pertama kali
 npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
 ```
 
-## Building
+Buka browser: **http://localhost:5173**
 
-To create a production version of your app:
+---
 
-```sh
-npm run build
+## 5. Setup Akun Admin
+
+### Daftar akun baru
+
+Buka `http://localhost:5173/register`, daftar dengan email dan password yang diingat.
+
+### Set role admin via psql
+
+```powershell
+podman exec -it pmpsti-db psql -U admin -d pmpsti_rag
 ```
 
-You can preview the production build with `npm run preview`.
+```sql
+UPDATE users SET role = 'admin' WHERE email = 'email-kamu@domain.com';
+SELECT id, email, role FROM users;
+\q
+```
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+Login ulang agar JWT token di-refresh dengan role admin yang baru.
 
+---
 
+## 6. Ingest Dokumen (Python)
 
-podman exec -it pmpsti-db psql -U admin -d postgres
-\l
-\c pmpsti_rag
+```powershell
+cd C:\Users\achsoe\Developments\pmpsti_rag\scripts
+
+# Install dependensi (sekali saja)
+pip install -r requirements.txt
+
+# Jalankan ingest — letakkan dokumen PDF/DOCX di folder docs/
+python ingest.py
+```
+
+Dokumen yang sudah diingest akan muncul di halaman Admin → Documents.
+
+---
+
+## Perintah Berguna
+
+### Database
+
+```powershell
+# Masuk psql
+podman exec -it pmpsti-db psql -U admin -d pmpsti_rag
+
+# Lihat semua tabel
+\dt
+
+# Lihat users
+SELECT id, email, role, is_active FROM users;
+
+# Lihat dokumen yang sudah diingest
+SELECT document_id, title, category FROM documents LIMIT 20;
+
+# Lihat sesi chat
+SELECT id, title, updated_at FROM chat_sessions ORDER BY updated_at DESC LIMIT 10;
+
+# Hitung chunks
+SELECT COUNT(*) FROM chunks;
+```
+
+### Reset password user (via register ulang)
+
+Karena password di-hash dengan Argon2, tidak bisa diubah langsung dari psql.
+Daftar akun baru lewat UI, lalu set role admin seperti langkah di atas.
+
+### Stop semua service
+
+```powershell
+# Stop database
+podman stop pmpsti-db
+
+# Backend & frontend: Ctrl+C di masing-masing terminal
+```
+
+---
+
+## Struktur Project
+
+```
+pmpsti_rag/
+├── src/                  # Backend Rust
+│   ├── main.rs           # Entry point, routing
+│   ├── db.rs             # Database layer (SQLx)
+│   ├── handlers.rs       # HTTP handlers
+│   ├── search.rs         # Search engine (hybrid vector + BM25)
+│   ├── models.rs         # Request/response structs
+│   ├── auth.rs           # JWT middleware
+│   ├── ai.rs             # LLM integration
+│   └── rag.rs            # RAG pipeline
+├── frontend/             # SvelteKit frontend
+│   └── src/
+│       ├── routes/       # Halaman aplikasi
+│       └── lib/          # Store, API client
+├── scripts/
+│   ├── ingest.py         # Pipeline ingest dokumen
+│   └── requirements.txt
+├── docs/                 # Folder dokumen untuk diingest
+├── .env                  # Konfigurasi (tidak di-commit)
+└── Cargo.toml
+```
+
+---
+
+## Tech Stack
+
+| Komponen | Teknologi |
+|----------|-----------|
+| Backend | Rust, Actix-web 4, SQLx 0.7 |
+| Database | PostgreSQL 16, pgvector (HNSW index) |
+| Embedding | fastembed `multilingual-e5-base` |
+| Search | Hybrid: 70% vector + 30% BM25 |
+| Auth | JWT HS256, Argon2id |
+| Frontend | SvelteKit, Tailwind CSS v3 |
+| LLM | Ollama / Groq / OpenAI-compatible |
+| Ingest | Python, LaBSE, PyMuPDF, SemanticChunker |

@@ -1,0 +1,15 @@
+beautifulsoup4
+langchain-experimental
+langchain-huggingface
+langchain-text-splitters
+pgvector
+Pillow
+psycopg2-binary
+pymupdf
+pymupdf4llm
+pytesseract
+python-docx
+requests
+sentence-transformers
+torch
+transformers

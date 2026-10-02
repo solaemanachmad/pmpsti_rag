@@ -1,4 +1,19 @@
-const BASE = '/api';
+// Deteksi API URL: env var (Vercel) > HF Space otomatis > proxy lokal
+function resolveApiBase(): string {
+  // 1. Dari environment variable (set di Vercel/CF Pages)
+  if (import.meta.env.PUBLIC_API_URL) return import.meta.env.PUBLIC_API_URL;
+  // 2. Di browser: deteksi apakah running di HF Space (*.hf.space)
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('.hf.space')) {
+    // Frontend HF Space → panggil backend HF Space langsung
+    // Format hostname: <user>-<space-name>.hf.space
+    // Kita expect PUBLIC_HF_BACKEND_URL diset saat deploy frontend
+    // Fallback: pakai origin yang sama (jika monorepo di satu space)
+    return import.meta.env.PUBLIC_HF_BACKEND_URL || '';
+  }
+  // 3. Dev lokal: gunakan Vite proxy (kosong = relative /api)
+  return '';
+}
+const BASE = resolveApiBase() + '/api';
 
 function getToken(): string | null {
   if (typeof localStorage === 'undefined') return null;
@@ -260,4 +275,66 @@ export interface AdminDocument {
   category: string;
   source_url: string;
   chunk_count: number;
+}
+// ── Public ask (guest, no auth) ──
+export interface GuestAskResponse {
+  answer: string;
+  sources: SourceRef[];
+  search_time_ms: number;
+  questions_used: number;
+  questions_left: number;
+}
+
+export function askPublic(
+  query: string,
+  guestToken: string,
+  onChunk: (text: string) => void,
+  onDone: (res: GuestAskResponse) => void,
+  onError: (err: string) => void
+): () => void {
+  const ctrl = new AbortController();
+  let cancelled = false;
+
+  (async () => {
+    try {
+      const res = await fetch(`${BASE}/ask_public`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Guest-Token': guestToken
+        },
+        body: JSON.stringify({ query }),
+        signal: ctrl.signal
+      });
+
+      if (res.status === 429) {
+        onError('__quota_exceeded__');
+        return;
+      }
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        onError(j?.error ?? `HTTP ${res.status}`);
+        return;
+      }
+
+      const json = await res.json();
+      const data: GuestAskResponse = json.data ?? json;
+      if (cancelled) return;
+
+      // Word-by-word streaming simulation
+      const words = data.answer.split(' ');
+      for (let i = 0; i < words.length; i++) {
+        if (cancelled) return;
+        await new Promise(r => setTimeout(r, 25));
+        onChunk((i === 0 ? '' : ' ') + words[i]);
+      }
+
+      onDone(data);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name !== 'AbortError' && !cancelled) onError(String(e));
+    }
+  })();
+
+  return () => { cancelled = true; ctrl.abort(); };
 }

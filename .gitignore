@@ -26,3 +26,13 @@ target/
 .fastembed_cache/
 scripts/.fastembed_cache/
 __pycache__/
+
+# Python
+scripts/.venv/
+scripts/logs/
+scripts/__pycache__/
+scripts/*.sql
+
+# Fly.io
+.fly/
+scripts/panduan_pmpsti_src/

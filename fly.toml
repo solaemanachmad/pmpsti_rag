@@ -1,0 +1,32 @@
+# Fly.io config untuk PMPSTI RAG API
+app = "pmpsti-rag-api"
+primary_region = "sin"   # Singapore — terdekat dari Indonesia
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "8080"
+  LLM_BACKEND = "gemini"
+  GEMINI_MODEL = "gemini-2.0-flash-lite"
+  # Secrets (jangan hardcode di sini):
+  # DATABASE_URL, JWT_SECRET, GEMINI_API_KEY
+  # → set via: fly secrets set KEY=value
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 50
+    soft_limit = 25
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

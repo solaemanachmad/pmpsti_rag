@@ -10,7 +10,7 @@
   let menuOpen = false;
   let dark = false;
 
-  const publicRoutes = ['/login', '/register'];
+  const publicRoutes = ['/', '/login', '/register'];
 
   onMount(async () => {
     dark = document.documentElement.classList.contains('dark');
