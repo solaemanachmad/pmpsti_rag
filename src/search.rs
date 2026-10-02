@@ -12,19 +12,18 @@ pub struct SearchEngine {
 }
 
 #[derive(Serialize)]
-struct EmbedRequest<'a> {
-    model:   &'a str,
-    content: EmbedContent<'a>,
+struct EmbedRequest {
+    content: EmbedContent,
 }
 
 #[derive(Serialize)]
-struct EmbedContent<'a> {
-    parts: Vec<EmbedPart<'a>>,
+struct EmbedContent {
+    parts: Vec<EmbedPart>,
 }
 
 #[derive(Serialize)]
-struct EmbedPart<'a> {
-    text: &'a str,
+struct EmbedPart {
+    text: String,
 }
 
 #[derive(Deserialize)]
@@ -50,18 +49,16 @@ impl SearchEngine {
     }
 
     async fn embed_query(&self, query: &str) -> Result<Vec<f32>, anyhow::Error> {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
-            self.api_key
-        );
+        let url = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent";
         let body = EmbedRequest {
-            model: "models/text-embedding-004",
             content: EmbedContent {
-                parts: vec![EmbedPart { text: query }],
+                parts: vec![EmbedPart { text: query.to_string() }],
             },
         };
         let resp = self.http_client
-            .post(&url)
+            .post(url)
+            .header("x-goog-api-key", &self.api_key)
+            .header("Content-Type", "application/json")
             .json(&body)
             .send()
             .await?
