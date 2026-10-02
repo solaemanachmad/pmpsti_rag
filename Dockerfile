@@ -7,7 +7,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     pkg-config \
     libssl-dev \
-    libopenblas-dev \
     cmake \
     g++ \
     && rm -rf /var/lib/apt/lists/*
@@ -36,14 +35,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
-    libopenblas0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /app/target/release/pmpsti ./pmpsti
-
-# Create cache dir owned by ubuntu (UID 1000, built-in ubuntu:24.04 user)
-RUN mkdir -p /app/.cache && chown -R ubuntu:ubuntu /app
+RUN chown -R ubuntu:ubuntu /app
 
 USER ubuntu
 
@@ -51,6 +47,5 @@ EXPOSE 7860
 
 ENV HOST=0.0.0.0
 ENV PORT=7860
-ENV FASTEMBED_CACHE_PATH=/app/.cache
 
 CMD ["./pmpsti"]

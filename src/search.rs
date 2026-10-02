@@ -1,39 +1,74 @@
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use log::info;
-use std::{env, path::PathBuf, sync::{Arc, Mutex}};
+use std::{env, sync::Arc};
+use serde::{Deserialize, Serialize};
+use reqwest::Client;
 
 use crate::db::{Database, SearchResult};
 
 pub struct SearchEngine {
-    pub db: Arc<Database>,
-    model:  Mutex<TextEmbedding>,
+    pub db:      Arc<Database>,
+    api_key:     String,
+    http_client: Client,
+}
+
+#[derive(Serialize)]
+struct EmbedRequest<'a> {
+    model:   &'a str,
+    content: EmbedContent<'a>,
+}
+
+#[derive(Serialize)]
+struct EmbedContent<'a> {
+    parts: Vec<EmbedPart<'a>>,
+}
+
+#[derive(Serialize)]
+struct EmbedPart<'a> {
+    text: &'a str,
+}
+
+#[derive(Deserialize)]
+struct EmbedResponse {
+    embedding: EmbedValues,
+}
+
+#[derive(Deserialize)]
+struct EmbedValues {
+    values: Vec<f32>,
 }
 
 impl SearchEngine {
     pub fn new(db: Arc<Database>) -> Result<Self, anyhow::Error> {
-        info!("Loading multilingual-e5-base model (fastembed)...");
-        let cache_dir = env::var("FASTEMBED_CACHE_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                let mut p = env::temp_dir();
-                p.push("fastembed_cache");
-                p
-            });
-        std::fs::create_dir_all(&cache_dir).ok();
-        let model = TextEmbedding::try_new(
-            InitOptions::new(EmbeddingModel::MultilingualE5Base)
-                .with_cache_dir(cache_dir)
-                .with_show_download_progress(true)
-        )?;
-        info!("AI model loaded successfully.");
-        Ok(Self { db, model: Mutex::new(model) })
+        let api_key = env::var("GEMINI_API_KEY")
+            .map_err(|_| anyhow::anyhow!("GEMINI_API_KEY tidak ditemukan"))?;
+        info!("SearchEngine siap (Gemini text-embedding-004).");
+        Ok(Self {
+            db,
+            api_key,
+            http_client: Client::new(),
+        })
     }
 
-    fn embed_query(&self, query: &str) -> Result<Vec<f32>, anyhow::Error> {
-        let prefixed = format!("query: {}", query);
-        let mut lock = self.model.lock().unwrap();
-        let vecs = lock.embed(vec![prefixed], None)?;
-        Ok(vecs[0].clone())
+    async fn embed_query(&self, query: &str) -> Result<Vec<f32>, anyhow::Error> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
+            self.api_key
+        );
+        let body = EmbedRequest {
+            model: "models/text-embedding-004",
+            content: EmbedContent {
+                parts: vec![EmbedPart { text: query }],
+            },
+        };
+        let resp = self.http_client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<EmbedResponse>()
+            .await?;
+        Ok(resp.embedding.values)
     }
 
     // ── Hybrid (default) ──
@@ -43,7 +78,7 @@ impl SearchEngine {
         limit:           i64,
         category_filter: Option<&str>,
     ) -> Result<Vec<SearchResult>, anyhow::Error> {
-        let embedding = self.embed_query(query)?;
+        let embedding = self.embed_query(query).await?;
         let mut results = self.db.search_hybrid(query, embedding, limit, category_filter).await?;
         self.enrich_snippets(&mut results, query);
         Ok(results)
@@ -56,7 +91,7 @@ impl SearchEngine {
         limit:           i64,
         category_filter: Option<&str>,
     ) -> Result<Vec<SearchResult>, anyhow::Error> {
-        let embedding = self.embed_query(query)?;
+        let embedding = self.embed_query(query).await?;
         let mut results = self.db.search_vector(embedding, limit, category_filter).await?;
         self.enrich_snippets(&mut results, query);
         Ok(results)
@@ -74,7 +109,6 @@ impl SearchEngine {
         Ok(results)
     }
 
-    // ── Ganti snippet default dengan snippet berbasis query terms ──
     fn enrich_snippets(&self, results: &mut Vec<SearchResult>, query: &str) {
         let terms: Vec<&str> = query.split_whitespace().collect();
         for r in results.iter_mut() {
@@ -82,7 +116,6 @@ impl SearchEngine {
         }
     }
 
-    // ── Format context untuk dikirim ke LLM ──
     pub fn format_context(results: &[SearchResult]) -> String {
         results
             .iter()
