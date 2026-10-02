@@ -29,7 +29,6 @@ COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────
-# Must match builder's glibc — ubuntu:24.04 has glibc 2.39
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -40,17 +39,15 @@ RUN apt-get update && apt-get install -y \
     libopenblas0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser
-
+# ubuntu:24.04 already has UID 1000 (user 'ubuntu'), reuse it
 WORKDIR /app
 COPY --from=builder /app/target/release/pmpsti ./pmpsti
 
 # Fastembed model cache directory
-RUN mkdir -p /app/.cache && chown appuser:appuser /app/.cache
+RUN mkdir -p /app/.cache && chown ubuntu:ubuntu /app/.cache
+RUN chown ubuntu:ubuntu /app/pmpsti
 
-RUN chown appuser:appuser /app/pmpsti
-USER appuser
+USER ubuntu
 
 EXPOSE 7860
 
