@@ -12,8 +12,10 @@ pub struct SearchEngine {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct EmbedRequest {
     content: EmbedContent,
+    output_dimensionality: u32,
 }
 
 #[derive(Serialize)]
@@ -40,7 +42,7 @@ impl SearchEngine {
     pub fn new(db: Arc<Database>) -> Result<Self, anyhow::Error> {
         let api_key = env::var("GEMINI_API_KEY")
             .map_err(|_| anyhow::anyhow!("GEMINI_API_KEY tidak ditemukan"))?;
-        info!("SearchEngine siap (Gemini text-embedding-004).");
+        info!("SearchEngine siap (Gemini gemini-embedding-001, 768-dim).");
         Ok(Self {
             db,
             api_key,
@@ -49,11 +51,12 @@ impl SearchEngine {
     }
 
     async fn embed_query(&self, query: &str) -> Result<Vec<f32>, anyhow::Error> {
-        let url = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent";
+        let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
         let body = EmbedRequest {
             content: EmbedContent {
                 parts: vec![EmbedPart { text: query.to_string() }],
             },
+            output_dimensionality: 768,
         };
         let resp = self.http_client
             .post(url)

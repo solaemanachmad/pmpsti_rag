@@ -1,4 +1,5 @@
 # ── Stage 1: Builder ──────────────────────────────────────────────
+# ubuntu:24.04 ships glibc 2.39
 FROM ubuntu:24.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -39,8 +40,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 COPY --from=builder /app/target/release/pmpsti ./pmpsti
-RUN chown -R ubuntu:ubuntu /app
 
+RUN chown -R ubuntu:ubuntu /app
 USER ubuntu
 
 EXPOSE 7860
