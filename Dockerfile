@@ -39,13 +39,11 @@ RUN apt-get update && apt-get install -y \
     libopenblas0 \
     && rm -rf /var/lib/apt/lists/*
 
-# ubuntu:24.04 already has UID 1000 (user 'ubuntu'), reuse it
 WORKDIR /app
 COPY --from=builder /app/target/release/pmpsti ./pmpsti
 
-# Fastembed model cache directory
-RUN mkdir -p /app/.cache && chown ubuntu:ubuntu /app/.cache
-RUN chown ubuntu:ubuntu /app/pmpsti
+# Create cache dir owned by ubuntu (UID 1000, built-in ubuntu:24.04 user)
+RUN mkdir -p /app/.cache && chown -R ubuntu:ubuntu /app
 
 USER ubuntu
 

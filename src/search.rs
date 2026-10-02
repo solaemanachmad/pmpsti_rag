@@ -1,6 +1,6 @@
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use log::info;
-use std::sync::{Arc, Mutex};
+use std::{env, path::PathBuf, sync::{Arc, Mutex}};
 
 use crate::db::{Database, SearchResult};
 
@@ -12,8 +12,18 @@ pub struct SearchEngine {
 impl SearchEngine {
     pub fn new(db: Arc<Database>) -> Result<Self, anyhow::Error> {
         info!("Loading multilingual-e5-base model (fastembed)...");
+        let cache_dir = env::var("FASTEMBED_CACHE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                let mut p = env::temp_dir();
+                p.push("fastembed_cache");
+                p
+            });
+        std::fs::create_dir_all(&cache_dir).ok();
         let model = TextEmbedding::try_new(
             InitOptions::new(EmbeddingModel::MultilingualE5Base)
+                .with_cache_dir(cache_dir)
+                .with_show_download_progress(true)
         )?;
         info!("AI model loaded successfully.");
         Ok(Self { db, model: Mutex::new(model) })
