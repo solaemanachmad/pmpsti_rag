@@ -2,9 +2,5 @@
   "buildCommand": "npm run build",
   "outputDirectory": "build",
   "installCommand": "npm install",
-  "framework": "sveltekit",
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "https://pmpsti-rag.onrender.com/api/$1" },
-    { "source": "/health",   "destination": "https://pmpsti-rag.onrender.com/health" }
-  ]
+  "framework": "sveltekit"
 }
