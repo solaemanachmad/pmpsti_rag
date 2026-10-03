@@ -2,7 +2,7 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/api/client';
   import { authStore } from '$lib/stores/auth';
-  import { MessageSquare, Loader2 } from 'lucide-svelte';
+  import { Loader2 } from 'lucide-svelte';
 
   let email = '';
   let password = '';
@@ -25,63 +25,61 @@
   }
 </script>
 
-<svelte:head><title>Login — PMPSTI RAG</title></svelte:head>
+<svelte:head><title>Masuk — PMPSTI RAG</title></svelte:head>
 
-<div class="min-h-screen flex items-center justify-center bg-background p-4">
-  <div class="w-full max-w-sm">
-    <!-- Logo -->
-    <div class="flex items-center justify-center gap-2 mb-8">
-      <div class="w-9 h-9 rounded-xl bg-primary flex items-center justify-center">
-        <MessageSquare size={18} class="text-primary-foreground" />
+<div class="min-h-screen flex flex-col bg-background">
+  <!-- Top bar UGM -->
+  <div class="bg-[#002147] h-1.5 w-full"></div>
+  <div class="bg-[#0055A5] h-0.5 w-full mb-8"></div>
+
+  <div class="flex-1 flex flex-col items-center justify-center px-4 pb-12">
+    <!-- Branding -->
+    <div class="flex flex-col items-center gap-3 mb-8">
+      <img src="/ugm-logo.svg" alt="Logo UGM" class="w-16 h-16" />
+      <div class="text-center">
+        <div class="font-bold text-lg text-foreground">PMPSTI RAG</div>
+        <div class="text-xs text-muted-foreground">Asisten Akademik — Universitas Gadjah Mada</div>
       </div>
-      <span class="text-xl font-semibold">PMPSTI RAG</span>
     </div>
 
-    <div class="bg-card border rounded-xl p-6 shadow-sm">
-      <h1 class="text-lg font-semibold mb-1">Masuk</h1>
-      <p class="text-sm text-muted-foreground mb-6">Masukkan akun kamu untuk melanjutkan</p>
+    <!-- Card -->
+    <div class="w-full max-w-sm bg-card border rounded-xl p-6 shadow-sm">
+      <h1 class="text-base font-semibold mb-1">Masuk ke akun</h1>
+      <p class="text-xs text-muted-foreground mb-5">Gunakan email @mail.ugm.ac.id kamu</p>
 
       {#if error}
-        <div class="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-3 py-2.5 mb-4">
+        <div class="bg-destructive/10 border border-destructive/20 text-destructive
+                    text-xs rounded-lg px-3 py-2.5 mb-4 leading-relaxed">
           {error}
         </div>
       {/if}
 
       <form on:submit|preventDefault={handleLogin} class="space-y-4">
         <div>
-          <label class="text-sm font-medium mb-1.5 block" for="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            bind:value={email}
-            placeholder="test@test.com"
-            class="input"
-            required
-          />
+          <label class="text-xs font-medium mb-1.5 block text-muted-foreground" for="email">Email</label>
+          <input id="email" type="email" bind:value={email}
+            placeholder="nim@mail.ugm.ac.id" class="input" autocomplete="email" required />
         </div>
         <div>
-          <label class="text-sm font-medium mb-1.5 block" for="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            bind:value={password}
-            placeholder="••••••••"
-            class="input"
-            required
-          />
+          <label class="text-xs font-medium mb-1.5 block text-muted-foreground" for="password">Password</label>
+          <input id="password" type="password" bind:value={password}
+            placeholder="••••••••" class="input" autocomplete="current-password" required />
         </div>
-        <button type="submit" disabled={loading} class="btn-primary w-full">
-          {#if loading}
-            <Loader2 size={16} class="animate-spin mr-2" />
-          {/if}
+        <button type="submit" disabled={loading}
+          class="btn-primary w-full mt-1 bg-[#0055A5] hover:bg-[#002147]">
+          {#if loading}<Loader2 size={15} class="animate-spin" />{/if}
           Masuk
         </button>
       </form>
 
-      <p class="text-sm text-center text-muted-foreground mt-4">
+      <p class="text-xs text-center text-muted-foreground mt-5">
         Belum punya akun?
-        <a href="/register" class="text-foreground font-medium hover:underline">Daftar</a>
+        <a href="/register" class="text-[#0055A5] font-semibold hover:underline">Daftar</a>
       </p>
     </div>
+
+    <a href="/" class="mt-5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+      ← Kembali ke halaman utama
+    </a>
   </div>
 </div>

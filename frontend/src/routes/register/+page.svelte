@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { auth } from '$lib/api/client';
-  import { MessageSquare, Loader2, MailCheck } from 'lucide-svelte';
+  import { Loader2, MailCheck } from 'lucide-svelte';
 
   let email = '';
   let password = '';
@@ -34,73 +33,93 @@
 
 <svelte:head><title>Daftar — PMPSTI RAG</title></svelte:head>
 
-<div class="min-h-screen flex items-center justify-center bg-background p-4">
-  <div class="w-full max-w-sm">
-    <div class="flex items-center justify-center gap-2 mb-8">
-      <div class="w-9 h-9 rounded-xl bg-primary flex items-center justify-center">
-        <MessageSquare size={18} class="text-primary-foreground" />
+<div class="min-h-screen flex flex-col bg-background">
+  <div class="bg-[#002147] h-1.5 w-full"></div>
+  <div class="bg-[#0055A5] h-0.5 w-full mb-8"></div>
+
+  <div class="flex-1 flex flex-col items-center justify-center px-4 pb-12">
+    <!-- Branding -->
+    <div class="flex flex-col items-center gap-3 mb-8">
+      <img src="/ugm-logo.svg" alt="Logo UGM" class="w-16 h-16" />
+      <div class="text-center">
+        <div class="font-bold text-lg text-foreground">PMPSTI RAG</div>
+        <div class="text-xs text-muted-foreground">Asisten Akademik — Universitas Gadjah Mada</div>
       </div>
-      <span class="text-xl font-semibold">PMPSTI RAG</span>
     </div>
 
     {#if registered}
-      <!-- ── Sukses: instruksikan cek email ── -->
-      <div class="bg-card border rounded-xl p-6 shadow-sm text-center space-y-4">
-        <div class="flex items-center justify-center w-14 h-14 rounded-full bg-primary/10 mx-auto">
-          <MailCheck size={28} class="text-primary" />
+      <!-- ── Sukses ── -->
+      <div class="w-full max-w-sm bg-card border rounded-xl p-6 shadow-sm text-center space-y-3">
+        <div class="w-14 h-14 rounded-full bg-[#0055A5]/10 flex items-center justify-center mx-auto">
+          <MailCheck size={26} class="text-[#0055A5]" />
         </div>
-        <h1 class="text-lg font-semibold">Cek email kamu!</h1>
-        <p class="text-sm text-muted-foreground">
-          Kami sudah mengirim link verifikasi ke<br>
-          <span class="font-medium text-foreground">{email}</span>
+        <h1 class="text-base font-semibold">Cek email kamu</h1>
+        <p class="text-sm text-muted-foreground leading-relaxed">
+          Link verifikasi sudah dikirim ke<br>
+          <span class="font-semibold text-foreground">{email}</span>
         </p>
-        <p class="text-sm text-muted-foreground">
-          Klik link tersebut untuk mengaktifkan akun, lalu login.
-          Link berlaku selama <strong>24 jam</strong>.
+        <p class="text-xs text-muted-foreground">
+          Klik link tersebut untuk mengaktifkan akun. Berlaku <strong>24 jam</strong>.
         </p>
-        <a href="/login" class="btn-primary w-full inline-block text-center">
-          Pergi ke halaman Login
+        <a href="/login"
+          class="btn-primary w-full mt-1 bg-[#0055A5] hover:bg-[#002147]">
+          Pergi ke halaman masuk
         </a>
       </div>
+
     {:else}
-      <div class="bg-card border rounded-xl p-6 shadow-sm">
-        <h1 class="text-lg font-semibold mb-1">Buat akun</h1>
-        <p class="text-sm text-muted-foreground mb-6">
-          Khusus email <strong>@mail.ugm.ac.id</strong>
+      <!-- ── Form ── -->
+      <div class="w-full max-w-sm bg-card border rounded-xl p-6 shadow-sm">
+        <h1 class="text-base font-semibold mb-1">Buat akun</h1>
+        <p class="text-xs text-muted-foreground mb-5">
+          Khusus untuk email <span class="font-semibold text-foreground">@mail.ugm.ac.id</span>
         </p>
 
         {#if error}
-          <div class="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-3 py-2.5 mb-4">
+          <div class="bg-destructive/10 border border-destructive/20 text-destructive
+                      text-xs rounded-lg px-3 py-2.5 mb-4 leading-relaxed">
             {error}
           </div>
         {/if}
 
         <form on:submit|preventDefault={handleRegister} class="space-y-4">
           <div>
-            <label class="text-sm font-medium mb-1.5 block" for="name">Nama (opsional)</label>
-            <input id="name" type="text" bind:value={display_name} placeholder="Nama kamu" class="input" />
+            <label class="text-xs font-medium mb-1.5 block text-muted-foreground" for="name">
+              Nama lengkap <span class="text-muted-foreground/60">(opsional)</span>
+            </label>
+            <input id="name" type="text" bind:value={display_name}
+              placeholder="Nama kamu" class="input" autocomplete="name" />
           </div>
           <div>
-            <label class="text-sm font-medium mb-1.5 block" for="email">Email UGM</label>
+            <label class="text-xs font-medium mb-1.5 block text-muted-foreground" for="email">
+              Email UGM
+            </label>
             <input id="email" type="email" bind:value={email}
-              placeholder="nim@mail.ugm.ac.id" class="input" required />
+              placeholder="nim@mail.ugm.ac.id" class="input" autocomplete="email" required />
           </div>
           <div>
-            <label class="text-sm font-medium mb-1.5 block" for="password">Password</label>
+            <label class="text-xs font-medium mb-1.5 block text-muted-foreground" for="password">
+              Password
+            </label>
             <input id="password" type="password" bind:value={password}
-              placeholder="Minimal 8 karakter" class="input" required />
+              placeholder="Minimal 8 karakter" class="input" autocomplete="new-password" required />
           </div>
-          <button type="submit" disabled={loading} class="btn-primary w-full">
-            {#if loading}<Loader2 size={16} class="animate-spin mr-2" />{/if}
+          <button type="submit" disabled={loading}
+            class="btn-primary w-full mt-1 bg-[#0055A5] hover:bg-[#002147]">
+            {#if loading}<Loader2 size={15} class="animate-spin" />{/if}
             Daftar
           </button>
         </form>
 
-        <p class="text-sm text-center text-muted-foreground mt-4">
+        <p class="text-xs text-center text-muted-foreground mt-5">
           Sudah punya akun?
-          <a href="/login" class="text-foreground font-medium hover:underline">Masuk</a>
+          <a href="/login" class="text-[#0055A5] font-semibold hover:underline">Masuk</a>
         </p>
       </div>
     {/if}
+
+    <a href="/" class="mt-5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+      ← Kembali ke halaman utama
+    </a>
   </div>
 </div>

@@ -4,59 +4,125 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 224 71.4% 4.1%;
-    --card: 0 0% 100%;
-    --card-foreground: 224 71.4% 4.1%;
-    --primary: 220.9 39.3% 11%;
-    --primary-foreground: 210 20% 98%;
-    --secondary: 220 14.3% 95.9%;
-    --secondary-foreground: 220.9 39.3% 11%;
-    --muted: 220 14.3% 95.9%;
-    --muted-foreground: 220 8.9% 46.1%;
-    --accent: 220 14.3% 95.9%;
-    --accent-foreground: 220.9 39.3% 11%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 20% 98%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 224 71.4% 4.1%;
-    --radius: 0.5rem;
+    /* UGM palette */
+    --ugm-navy:  #002147;
+    --ugm-blue:  #0055A5;
+    --ugm-gold:  #F5A623;
+
+    --background:         0 0% 97.5%;       /* #F8F9FC — off-white */
+    --foreground:         228 50% 12%;       /* #1A1A2E near-black */
+    --card:               0 0% 100%;
+    --card-foreground:    228 50% 12%;
+    --primary:            213 100% 32%;      /* #0055A5 UGM blue */
+    --primary-foreground: 0 0% 100%;
+    --secondary:          213 100% 12%;      /* #002147 UGM navy */
+    --secondary-foreground: 0 0% 100%;
+    --muted:              220 14% 93%;
+    --muted-foreground:   220 9% 46%;
+    --accent:             37 91% 55%;        /* #F5A623 UGM gold */
+    --accent-foreground:  228 50% 12%;
+    --destructive:        0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border:             220 13% 88%;
+    --input:              220 13% 88%;
+    --ring:               213 100% 32%;
+    --radius:             0.5rem;
   }
+
   .dark {
-    --background: 224 71.4% 4.1%;
-    --foreground: 210 20% 98%;
-    --card: 224 71.4% 4.1%;
-    --card-foreground: 210 20% 98%;
-    --primary: 210 20% 98%;
-    --primary-foreground: 220.9 39.3% 11%;
-    --secondary: 215 27.9% 16.9%;
-    --secondary-foreground: 210 20% 98%;
-    --muted: 215 27.9% 16.9%;
-    --muted-foreground: 217.9 10.6% 64.9%;
-    --accent: 215 27.9% 16.9%;
-    --accent-foreground: 210 20% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 20% 98%;
-    --border: 215 27.9% 16.9%;
-    --input: 215 27.9% 16.9%;
-    --ring: 216 12.2% 83.9%;
+    --background:         213 100% 8%;       /* deep navy */
+    --foreground:         210 20% 95%;
+    --card:               213 60% 12%;
+    --card-foreground:    210 20% 95%;
+    --primary:            213 80% 55%;       /* lighter blue for dark */
+    --primary-foreground: 0 0% 100%;
+    --secondary:          213 100% 20%;
+    --secondary-foreground: 0 0% 100%;
+    --muted:              213 40% 18%;
+    --muted-foreground:   217 10% 60%;
+    --accent:             37 91% 55%;
+    --accent-foreground:  228 50% 12%;
+    --destructive:        0 62% 40%;
+    --destructive-foreground: 0 0% 100%;
+    --border:             213 40% 20%;
+    --input:              213 40% 20%;
+    --ring:               213 80% 55%;
   }
-  * {
-    border-color: hsl(var(--border));
+
+  * { border-color: hsl(var(--border)); }
+
+  html {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
+
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
+    line-height: 1.6;
+  }
+
+  /* Markdown prose inside chat bubbles */
+  .prose p { margin: 0.5em 0; }
+  .prose p:first-child { margin-top: 0; }
+  .prose p:last-child { margin-bottom: 0; }
+  .prose ul, .prose ol { padding-left: 1.5em; margin: 0.5em 0; }
+  .prose li { margin: 0.2em 0; }
+  .prose strong { font-weight: 600; }
+  .prose code {
+    font-size: 0.875em;
+    background: hsl(var(--muted));
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+  }
+  .prose pre {
+    background: hsl(var(--muted));
+    padding: 0.75em 1em;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 0.5em 0;
+  }
+  .prose pre code { background: none; padding: 0; }
+
+  sup.citation-ref {
+    font-size: 0.7em;
+    color: hsl(var(--primary));
+    font-weight: 600;
+    cursor: pointer;
   }
 }
 
 @layer components {
   .input {
-    @apply w-full px-3 py-2 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-ring transition-shadow;
+    @apply w-full px-3 py-2 text-sm border rounded-lg bg-background
+           focus:outline-none focus:ring-2 focus:ring-ring transition-shadow;
   }
   .btn-primary {
-    @apply flex items-center justify-center bg-primary text-primary-foreground text-sm font-medium px-4 py-2 rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity;
+    @apply inline-flex items-center justify-center gap-2
+           bg-primary text-primary-foreground text-sm font-semibold
+           px-4 py-2.5 rounded-lg
+           hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed
+           transition-all duration-150;
+  }
+  .btn-gold {
+    @apply inline-flex items-center justify-center gap-2
+           bg-accent text-accent-foreground text-sm font-semibold
+           px-4 py-2.5 rounded-lg
+           hover:brightness-105 disabled:opacity-50 disabled:cursor-not-allowed
+           transition-all duration-150;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2
+           text-sm font-medium text-muted-foreground
+           px-3 py-2 rounded-lg
+           hover:bg-muted hover:text-foreground
+           transition-colors duration-150;
+  }
+
+  /* Source card — klikkabel */
+  .source-card {
+    @apply flex items-start gap-3 p-3 rounded-lg border bg-card
+           hover:bg-muted/60 transition-colors cursor-pointer text-left w-full;
   }
 }
 
@@ -72,4 +138,8 @@
   margin-left: 1px;
   vertical-align: text-bottom;
   animation: blink 1s step-end infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor-blink { animation: none; opacity: 1; }
 }
