@@ -302,9 +302,10 @@ impl Database {
             "SELECT title, content, category, subcategory,
                     COALESCE(source_url, '') AS source_url,
                     page_number, chunk_index,
-                    1.0 - (embedding <=> $1) AS score
+                    COALESCE(1.0 - (embedding <=> $1), 0.0) AS score
              FROM documents
-             WHERE ($3::text IS NULL OR category = $3)
+             WHERE embedding IS NOT NULL
+               AND ($3::text IS NULL OR category = $3)
              ORDER BY embedding <=> $1
              LIMIT $2",
         )
@@ -334,7 +335,7 @@ impl Database {
                     COALESCE(source_url, '') AS source_url,
                     page_number, chunk_index,
                     (
-                        0.7 * (1.0 - (embedding <=> $1))
+                        0.7 * COALESCE(1.0 - (embedding <=> $1), 0.0)
                       + 0.3 * ts_rank(
                             to_tsvector('indonesian', content),
                             plainto_tsquery('indonesian', $2),
