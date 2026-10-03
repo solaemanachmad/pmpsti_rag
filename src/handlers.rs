@@ -1,18 +1,34 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
+use dashmap::DashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use uuid::Uuid;
 
 use crate::auth::{extract_bearer, generate_api_key, hash_password, sign_jwt, verify_jwt, verify_password};
 use crate::db::{ChatMessage, ChatSession, ChatSource, Database};
+use crate::email::send_verification_email;
 use crate::models::*;
 use crate::rag::RagEngine;
 
+// ── Rate limiter state: IP -> (fail_count, window_start) ──
+#[derive(Clone)]
+struct LoginAttempt {
+    count:      u32,
+    window_start: Instant,
+}
+
+const MAX_LOGIN_FAILS:   u32 = 5;
+const LOGIN_WINDOW_SECS: u64 = 15 * 60; // 15 menit
+
 // ── App state yang di-share ke semua handler ──
 pub struct AppState {
-    pub db:         Arc<Database>,
-    pub rag:        Arc<RagEngine>,
-    pub jwt_secret: String,
+    pub db:           Arc<Database>,
+    pub rag:          Arc<RagEngine>,
+    pub jwt_secret:   String,
+    pub resend_key:   String,
+    pub app_base_url: String,
+    pub login_attempts: Arc<DashMap<String, LoginAttempt>>,
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -45,9 +61,16 @@ pub async fn register(
     state: web::Data<AppState>,
     body:  web::Json<RegisterRequest>,
 ) -> HttpResponse {
+    // Validasi dasar
     if body.email.is_empty() || body.password.len() < 8 {
         return HttpResponse::BadRequest()
             .json(ApiError::new(400, "Email tidak valid atau password kurang dari 8 karakter"));
+    }
+
+    // Hanya izinkan email @mail.ugm.ac.id
+    if !body.email.to_lowercase().ends_with("@mail.ugm.ac.id") {
+        return HttpResponse::BadRequest()
+            .json(ApiError::new(400, "Registrasi hanya untuk email @mail.ugm.ac.id"));
     }
 
     let hash = match tokio::task::spawn_blocking({
@@ -62,40 +85,114 @@ pub async fn register(
     };
 
     let display = body.display_name.clone().unwrap_or_default();
-    match state.db.create_user(&body.email, &hash, &display).await {
-        Ok(user) => {
-            let (token, expires_in) =
-                match sign_jwt(user.id, &user.email, &user.role, &state.jwt_secret) {
-                    Ok(t) => t,
-                    Err(_) => return HttpResponse::InternalServerError()
-                        .json(ApiError::new(500, "Gagal membuat token")),
-                };
-            HttpResponse::Created().json(ApiSuccess::new(AuthResponse {
-                token,
-                token_type: "Bearer".to_string(),
-                expires_in,
-                user: UserPublic {
-                    id:           user.id,
-                    email:        user.email,
-                    display_name: user.display_name,
-                    role:         user.role,
-                    created_at:   user.created_at,
-                },
-            }))
+    let user = match state.db.create_user(&body.email, &hash, &display).await {
+        Ok(u)  => u,
+        Err(e) => return HttpResponse::Conflict().json(ApiError::new(409, e)),
+    };
+
+    // Buat token verifikasi dan kirim email
+    let token = Uuid::new_v4().to_string();
+    if let Err(e) = state.db.create_verification_token(user.id, &token).await {
+        log::error!("Gagal menyimpan verification token: {e}");
+        return HttpResponse::InternalServerError()
+            .json(ApiError::new(500, "Gagal membuat token verifikasi"));
+    }
+
+    let verify_url = format!("{}/verify-email?token={}", state.app_base_url, token);
+    if let Err(e) = send_verification_email(
+        &state.resend_key,
+        &user.email,
+        &verify_url,
+        &state.app_base_url,
+    )
+    .await
+    {
+        log::error!("Gagal mengirim email verifikasi: {e}");
+        return HttpResponse::InternalServerError()
+            .json(ApiError::new(500, "Gagal mengirim email verifikasi"));
+    }
+
+    HttpResponse::Created().json(ApiSuccess::new(serde_json::json!({
+        "message": "Registrasi berhasil. Silakan cek email @mail.ugm.ac.id Anda untuk verifikasi akun."
+    })))
+}
+
+// ── Verifikasi email via token ──
+pub async fn verify_email(
+    state: web::Data<AppState>,
+    path:  web::Path<String>,
+) -> HttpResponse {
+    let token = path.into_inner();
+    match state.db.verify_email_token(&token).await {
+        Ok(Some(_)) => HttpResponse::Ok().json(ApiSuccess::new(serde_json::json!({
+            "message": "Email berhasil diverifikasi. Silakan login."
+        }))),
+        Ok(None) => HttpResponse::BadRequest().json(ApiError::new(
+            400,
+            "Token verifikasi tidak valid atau sudah kedaluwarsa",
+        )),
+        Err(e) => {
+            log::error!("verify_email_token error: {e}");
+            HttpResponse::InternalServerError()
+                .json(ApiError::new(500, "Gagal memverifikasi email"))
         }
-        Err(e) => HttpResponse::Conflict().json(ApiError::new(409, e)),
     }
 }
 
 pub async fn login(
+    req:   HttpRequest,
     state: web::Data<AppState>,
     body:  web::Json<LoginRequest>,
 ) -> HttpResponse {
+    // ── Rate limiting: max 5 gagal per 15 menit per IP ──
+    let ip = req
+        .connection_info()
+        .peer_addr()
+        .unwrap_or("unknown")
+        .to_string();
+
+    {
+        let now = Instant::now();
+        let mut entry = state.login_attempts.entry(ip.clone()).or_insert_with(|| LoginAttempt {
+            count: 0,
+            window_start: now,
+        });
+        if entry.window_start.elapsed().as_secs() >= LOGIN_WINDOW_SECS {
+            entry.count = 0;
+            entry.window_start = now;
+        }
+        if entry.count >= MAX_LOGIN_FAILS {
+            let remaining = LOGIN_WINDOW_SECS
+                .saturating_sub(entry.window_start.elapsed().as_secs());
+            return HttpResponse::TooManyRequests().json(ApiError::new(
+                429,
+                &format!(
+                    "Terlalu banyak percobaan login. Coba lagi dalam {} menit.",
+                    (remaining + 59) / 60
+                ),
+            ));
+        }
+    }
+
     let user = match state.db.get_user_by_email(&body.email).await {
         Ok(Some(u)) => u,
-        _ => return HttpResponse::Unauthorized()
-            .json(ApiError::new(401, "Email atau password salah")),
+        _ => {
+            // Increment fail counter agar tidak bisa brute-force enumeration
+            if let Some(mut entry) = state.login_attempts.get_mut(&ip) {
+                entry.count += 1;
+            }
+            return HttpResponse::Unauthorized()
+                .json(ApiError::new(401, "Email atau password salah"));
+        }
     };
+
+    // Cek apakah email sudah diverifikasi
+    if !user.email_verified {
+        return HttpResponse::Forbidden().json(ApiError::new(
+            403,
+            "Akun belum diverifikasi. Silakan cek email Anda untuk link verifikasi.",
+        ));
+    }
 
     if !user.is_active {
         return HttpResponse::Forbidden().json(ApiError::new(403, "Akun tidak aktif"));
@@ -109,9 +206,15 @@ pub async fn login(
         .unwrap_or(false);
 
     if !ok {
+        if let Some(mut entry) = state.login_attempts.get_mut(&ip) {
+            entry.count += 1;
+        }
         return HttpResponse::Unauthorized()
             .json(ApiError::new(401, "Email atau password salah"));
     }
+
+    // Login berhasil — reset counter
+    state.login_attempts.remove(&ip);
 
     let (token, expires_in) =
         match sign_jwt(user.id, &user.email, &user.role, &state.jwt_secret) {

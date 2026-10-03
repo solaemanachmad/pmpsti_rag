@@ -1,11 +1,13 @@
 mod auth;
 mod db;
+mod email;
 mod handlers;
 mod models;
 mod rag;
 mod search;
 
 use actix_web::{middleware, web, App, HttpServer, HttpResponse};
+use dashmap::DashMap;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 
@@ -26,6 +28,8 @@ struct Config {
     llm_api_url:    String,
     gemini_api_key: String,
     gemini_model:   String,
+    resend_api_key: String,
+    app_base_url:   String,
 }
 
 impl Config {
@@ -45,6 +49,9 @@ impl Config {
             gemini_api_key: std::env::var("GEMINI_API_KEY").unwrap_or_default(),
             gemini_model:   std::env::var("GEMINI_MODEL")
                 .unwrap_or_else(|_| "gemini-2.0-flash-lite".to_string()),
+            resend_api_key: std::env::var("RESEND_API_KEY").unwrap_or_default(),
+            app_base_url:   std::env::var("APP_BASE_URL")
+                .unwrap_or_else(|_| "https://pmpsti-rag.vercel.app".to_string()),
         }
     }
 }
@@ -94,10 +101,14 @@ async fn main() -> std::io::Result<()> {
     };
 
     let rag   = Arc::new(RagEngine::new(search, llm_config));
+    let login_attempts = Arc::new(DashMap::new());
     let state = web::Data::new(AppState {
-        db:         db.clone(),
-        rag:        rag.clone(),
-        jwt_secret: cfg.jwt_secret.clone(),
+        db:             db.clone(),
+        rag:            rag.clone(),
+        jwt_secret:     cfg.jwt_secret.clone(),
+        resend_key:     cfg.resend_api_key.clone(),
+        app_base_url:   cfg.app_base_url.clone(),
+        login_attempts: login_attempts.clone(),
     });
 
     let addr = format!("{}:{}", cfg.host, cfg.port);
@@ -126,11 +137,12 @@ async fn main() -> std::io::Result<()> {
             .route("/health", web::get().to(handlers::health))
             .service(
                 web::scope("/api/auth")
-                    .route("/register",    web::post().to(handlers::register))
-                    .route("/login",       web::post().to(handlers::login))
-                    .route("/me",          web::get().to(handlers::get_me))
-                    .route("/me",          web::patch().to(handlers::update_profile))
-                    .route("/me/password", web::patch().to(handlers::update_password))
+                    .route("/register",        web::post().to(handlers::register))
+                    .route("/login",           web::post().to(handlers::login))
+                    .route("/verify/{token}",  web::get().to(handlers::verify_email))
+                    .route("/me",              web::get().to(handlers::get_me))
+                    .route("/me",              web::patch().to(handlers::update_profile))
+                    .route("/me/password",     web::patch().to(handlers::update_password))
             )
             .service(
                 web::scope("/api")

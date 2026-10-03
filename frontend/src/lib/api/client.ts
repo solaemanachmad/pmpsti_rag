@@ -29,14 +29,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
   const json = await res.json();
-  if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(json?.error?.message ?? json?.error ?? `HTTP ${res.status}`);
   return (json.data ?? json) as T;
 }
 
 // ── Auth ──
 export const auth = {
   register: (email: string, password: string, display_name?: string) =>
-    request<AuthResponse>('/auth/register', {
+    request<{ message: string }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({ email, password, display_name })
     }),

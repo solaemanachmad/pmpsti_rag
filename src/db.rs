@@ -22,15 +22,16 @@ pub struct SearchResult {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct User {
-    pub id:            i64,
-    pub email:         String,
+    pub id:             i64,
+    pub email:          String,
     #[serde(skip_serializing)]
-    pub password_hash: String,
-    pub display_name:  String,
-    pub role:          String,
-    pub is_active:     bool,
-    pub created_at:    String,
-    pub updated_at:    String,
+    pub password_hash:  String,
+    pub display_name:   String,
+    pub role:           String,
+    pub is_active:      bool,
+    pub email_verified: bool,
+    pub created_at:     String,
+    pub updated_at:     String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -258,6 +259,23 @@ impl Database {
             )
         ").execute(&self.pool).await?;
 
+        // Email verification tokens
+        sqlx::query("
+            CREATE TABLE IF NOT EXISTS email_verifications (
+                id         BIGSERIAL PRIMARY KEY,
+                user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token      TEXT UNIQUE NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used_at    TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        ").execute(&self.pool).await?;
+
+        sqlx::query("
+            CREATE INDEX IF NOT EXISTS email_verif_token_idx
+            ON email_verifications(token)
+        ").execute(&self.pool).await?;
+
         // ── Safe migrations: tambah kolom baru kalau belum ada ──
         // (PostgreSQL 9.6+ mendukung ADD COLUMN IF NOT EXISTS)
         let migrations = [
@@ -274,6 +292,8 @@ impl Database {
             "CREATE UNIQUE INDEX IF NOT EXISTS documents_doc_chunk_key ON documents(document_id, chunk_index)",
             "CREATE INDEX IF NOT EXISTS documents_category_idx ON documents(category, subcategory)",
             "CREATE INDEX IF NOT EXISTS documents_source_url_idx ON documents(source_url)",
+            // Auth
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE",
         ];
 
         for sql in &migrations {
@@ -579,8 +599,8 @@ impl Database {
         display_name:  &str,
     ) -> Result<User, String> {
         let row = sqlx::query(
-            "INSERT INTO users (email, password_hash, display_name, role, is_active)
-             VALUES ($1, $2, $3, 'user', TRUE)
+            "INSERT INTO users (email, password_hash, display_name, role, is_active, email_verified)
+             VALUES ($1, $2, $3, 'user', FALSE, FALSE)
              RETURNING id, email, password_hash, display_name, role, is_active,
                        created_at::text, updated_at::text",
         )
@@ -600,9 +620,71 @@ impl Database {
         Ok(row_to_user(&row))
     }
 
+    // ════════════════════════════════════════════════════════════
+    //  EMAIL VERIFICATION
+    // ════════════════════════════════════════════════════════════
+
+    pub async fn create_verification_token(
+        &self,
+        user_id: i64,
+        token:   &str,
+    ) -> Result<(), String> {
+        sqlx::query(
+            "INSERT INTO email_verifications (user_id, token, expires_at)
+             VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
+        )
+        .bind(user_id)
+        .bind(token)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn verify_email_token(&self, token: &str) -> Result<Option<i64>, String> {
+        // Cek token valid dan belum expired/used
+        let row = sqlx::query(
+            "SELECT id, user_id FROM email_verifications
+             WHERE token = $1
+               AND expires_at > NOW()
+               AND used_at IS NULL",
+        )
+        .bind(token)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let row = match row {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let verif_id: i64 = row.get("id");
+        let user_id:  i64 = row.get("user_id");
+
+        // Tandai token sebagai used
+        sqlx::query("UPDATE email_verifications SET used_at = NOW() WHERE id = $1")
+            .bind(verif_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Aktifkan user
+        sqlx::query(
+            "UPDATE users SET is_active = TRUE, email_verified = TRUE, updated_at = NOW()
+             WHERE id = $1",
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(Some(user_id))
+    }
+
     pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>, String> {
         let row = sqlx::query(
-            "SELECT id, email, password_hash, display_name, role, is_active,
+            "SELECT id, email, password_hash, display_name, role, is_active, email_verified,
                     created_at::text, updated_at::text
              FROM users WHERE email = $1",
         )
@@ -616,7 +698,7 @@ impl Database {
 
     pub async fn get_user_by_id(&self, user_id: i64) -> Result<Option<User>, String> {
         let row = sqlx::query(
-            "SELECT id, email, password_hash, display_name, role, is_active,
+            "SELECT id, email, password_hash, display_name, role, is_active, email_verified,
                     created_at::text, updated_at::text
              FROM users WHERE id = $1",
         )
@@ -1028,14 +1110,15 @@ fn rows_to_results(rows: Vec<sqlx::postgres::PgRow>) -> Vec<SearchResult> {
 
 fn row_to_user(row: &sqlx::postgres::PgRow) -> User {
     User {
-        id:            row.get("id"),
-        email:         row.get("email"),
-        password_hash: row.get("password_hash"),
-        display_name:  row.get("display_name"),
-        role:          row.get("role"),
-        is_active:     row.get("is_active"),
-        created_at:    row.get("created_at"),
-        updated_at:    row.get("updated_at"),
+        id:             row.get("id"),
+        email:          row.get("email"),
+        password_hash:  row.get("password_hash"),
+        display_name:   row.get("display_name"),
+        role:           row.get("role"),
+        is_active:      row.get("is_active"),
+        email_verified: row.try_get("email_verified").unwrap_or(false),
+        created_at:     row.get("created_at"),
+        updated_at:     row.get("updated_at"),
     }
 }
 
