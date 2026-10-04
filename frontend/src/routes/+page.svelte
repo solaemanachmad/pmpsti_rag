@@ -139,8 +139,8 @@
     <div class="flex items-center gap-3">
       <!-- Logo: light=blue svg, dark=white svg via CSS -->
       <picture>
-        <source srcset="/ugm-logo-white.svg" media="(prefers-color-scheme: dark)" />
-        <img src="/ugm-logo-white.svg" alt="Logo UGM" class="w-9 h-9 shrink-0" />
+        <source srcset="/ugm-logo-white.png" media="(prefers-color-scheme: dark)" />
+        <img src="/ugm-logo-white.png" alt="Logo UGM" class="w-9 h-9 shrink-0" />
       </picture>
       <div class="leading-tight">
         <div class="font-semibold text-sm tracking-wide">PMPSTI RAG</div>
@@ -294,7 +294,7 @@
           {:else}
             <div class="flex gap-3">
               <div class="w-7 h-7 rounded-full bg-[#002147] flex items-center justify-center shrink-0 mt-0.5 p-1">
-                <img src="/ugm-logo-white.svg" alt="" class="w-full h-full object-contain" />
+                <img src="/ugm-logo-white.png" alt="" class="w-full h-full object-contain" />
               </div>
               <div class="flex-1 min-w-0">
                 <div class="prose text-sm leading-relaxed">
@@ -357,7 +357,7 @@
               {#if isStreaming && !streamingText}
                 <Loader2 size={13} class="animate-spin text-white/60" />
               {:else}
-                <img src="/ugm-logo-white.svg" alt="" class="w-full h-full object-contain" />
+                <img src="/ugm-logo-white.png" alt="" class="w-full h-full object-contain" />
               {/if}
             </div>
             <div class="prose text-sm leading-relaxed flex-1">
