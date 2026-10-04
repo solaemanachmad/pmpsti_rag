@@ -156,6 +156,14 @@
     } catch (e) { alert('Gagal: ' + e); }
   }
 
+  async function deleteUser(u: AdminUser) {
+    if (!confirm(`Hapus user ${u.email}? Tindakan ini tidak dapat dibatalkan.`)) return;
+    try {
+      await admin.deleteUser(u.id);
+      users = users.filter(x => x.id !== u.id);
+    } catch (e) { alert('Gagal menghapus: ' + e); }
+  }
+
   async function deleteDoc(id: string) {
     if (!confirm('Hapus dokumen ini?')) return;
     try {
@@ -452,6 +460,12 @@
                                      ? 'text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20'
                                      : 'text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'}">
                       {#if u.is_active}<ShieldOff size={15}/>{:else}<ShieldCheck size={15}/>{/if}
+                    </button>
+                    <button on:click={() => deleteUser(u)}
+                            title="Hapus user"
+                            class="p-1.5 rounded-lg text-rose-400 hover:text-rose-600
+                                   hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors ml-1">
+                      <Trash2 size={15}/>
                     </button>
                   </td>
                 </tr>

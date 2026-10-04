@@ -1263,6 +1263,15 @@ impl Database {
         Ok(())
     }
 
+    pub async fn admin_delete_user(&self, user_id: i64) -> Result<(), String> {
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ════════════════════════════════════════════════════════════
     //  ADMIN — SESSIONS
     // ════════════════════════════════════════════════════════════

@@ -102,6 +102,9 @@ export const admin = {
       body: JSON.stringify({ is_active })
     }),
 
+  deleteUser: (id: number) =>
+    request<{ message: string }>(`/admin/users/${id}`, { method: 'DELETE' }),
+
   // Create user (admin)
   createUser: (email: string, display_name?: string, role = 'user') =>
     request<AdminUser>('/admin/users', {

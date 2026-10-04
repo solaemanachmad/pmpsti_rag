@@ -849,6 +849,26 @@ pub async fn admin_toggle_user(
 //  ADMIN — CHAT SESSIONS
 // ══════════════════════════════════════════════════════════════════
 
+pub async fn admin_delete_user(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<i64>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    let user_id = path.into_inner();
+    // Prevent self-deletion
+    if claims.sub == user_id {
+        return HttpResponse::BadRequest().json(ApiError::new(400, "Tidak dapat menghapus akun sendiri"));
+    }
+    match state.db.admin_delete_user(user_id).await {
+        Ok(_)  => HttpResponse::Ok().json(ApiSuccess::new("User dihapus")),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
 pub async fn admin_list_sessions(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
     let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
     if claims.role != "admin" {
