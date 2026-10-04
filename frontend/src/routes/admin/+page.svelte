@@ -222,7 +222,7 @@
         { id: 'users',     icon: Users,      label: 'Pengguna' },
         { id: 'documents', icon: FileText,   label: 'Dokumen' },
         { id: 'logs',      icon: List,       label: 'Log Query' },
-      ])}
+      ]) as item}
         <button
           on:click={() => switchTab(item.id)}
           class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors
