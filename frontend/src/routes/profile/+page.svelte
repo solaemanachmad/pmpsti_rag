@@ -57,7 +57,7 @@
   }
 </script>
 
-<svelte:head><title>Profil — PMPSTI RAG</title></svelte:head>
+<svelte:head><title>Profil — PMPSTI</title></svelte:head>
 
 <div class="h-full overflow-y-auto p-6">
   <div class="max-w-xl mx-auto space-y-6">

@@ -27,7 +27,7 @@
   });
 </script>
 
-<svelte:head><title>Verifikasi Email — PMPSTI RAG</title></svelte:head>
+<svelte:head><title>Verifikasi Email — PMPSTI</title></svelte:head>
 
 <div class="min-h-screen flex flex-col bg-background">
   <div class="bg-[#002147] h-1.5 w-full"></div>
@@ -40,7 +40,7 @@
           <img src="/ugm-logo-blue.png" alt="Logo UGM" class="w-16 h-16" />
         </picture>
       <div class="text-center">
-        <div class="font-bold text-lg">PMPSTI RAG</div>
+        <div class="font-bold text-lg">PMPSTI</div>
         <div class="text-xs text-muted-foreground">Universitas Gadjah Mada</div>
       </div>
     </div>

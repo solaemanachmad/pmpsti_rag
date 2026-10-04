@@ -1356,3 +1356,110 @@ impl Database {
     }
 
 }
+
+// ══════════════════════════════════════════════════════════════════
+//  ADMIN QUERY LOGS
+// ══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AdminQueryLog {
+    pub id:              i64,
+    pub query_text:      String,
+    pub detected_language: String,
+    pub num_results:     i32,
+    pub search_time_ms:  i64,
+    pub user_id:         Option<i64>,
+    pub session_id:      Option<String>,
+    pub created_at:      String,
+}
+
+impl Database {
+    pub async fn admin_list_query_logs(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<AdminQueryLog>, i64)> {
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM query_logs")
+            .fetch_one(&self.pool).await?;
+
+        let rows = sqlx::query(
+            "SELECT id, query_text, detected_language, num_results, search_time_ms,
+                    user_id, session_id, created_at::text
+             FROM query_logs
+             ORDER BY created_at DESC
+             LIMIT $1 OFFSET $2"
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool).await?;
+
+        let logs = rows.iter().map(|r| AdminQueryLog {
+            id:               r.get("id"),
+            query_text:       r.get("query_text"),
+            detected_language: r.get("detected_language"),
+            num_results:      r.get("num_results"),
+            search_time_ms:   r.get("search_time_ms"),
+            user_id:          r.try_get("user_id").ok(),
+            session_id:       r.try_get("session_id").ok(),
+            created_at:       r.get("created_at"),
+        }).collect();
+
+        Ok((logs, total))
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  SEED ADMIN USER
+// ══════════════════════════════════════════════════════════════════
+
+/// Buat atau update admin user dari env ADMIN_EMAIL + ADMIN_PASSWORD.
+/// Aman dipanggil berkali-kali (idempoten).
+pub async fn seed_admin_user(db: &std::sync::Arc<Database>) {
+    let email = match std::env::var("ADMIN_EMAIL") {
+        Ok(e) if !e.is_empty() => e,
+        _ => {
+            log::info!("ADMIN_EMAIL tidak diset — skip seed admin.");
+            return;
+        }
+    };
+    let password = match std::env::var("ADMIN_PASSWORD") {
+        Ok(p) if !p.is_empty() => p,
+        _ => {
+            log::warn!("ADMIN_EMAIL diset tapi ADMIN_PASSWORD kosong — skip seed admin.");
+            return;
+        }
+    };
+
+    use argon2::{Argon2, PasswordHasher};
+    use argon2::password_hash::{SaltString, rand_core::OsRng};
+
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = match Argon2::default().hash_password(password.as_bytes(), &salt) {
+        Ok(h) => h.to_string(),
+        Err(e) => {
+            log::error!("Gagal hash password admin: {e}");
+            return;
+        }
+    };
+
+    // Upsert: insert jika belum ada, update password+role jika sudah ada
+    let result = sqlx::query(
+        "INSERT INTO users (email, password_hash, display_name, role, is_active, email_verified)
+         VALUES ($1, $2, 'Administrator', 'admin', true, true)
+         ON CONFLICT (email) DO UPDATE
+           SET password_hash  = EXCLUDED.password_hash,
+               role           = 'admin',
+               email_verified = true,
+               is_active      = true,
+               updated_at     = NOW()"
+    )
+    .bind(&email)
+    .bind(&hash)
+    .execute(&db.pool)
+    .await;
+
+    match result {
+        Ok(_)  => log::info!("Admin user OK: {}", email),
+        Err(e) => log::error!("Gagal seed admin: {e}"),
+    }
+}

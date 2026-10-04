@@ -74,7 +74,7 @@
   }
 </script>
 
-<svelte:head><title>API Keys — PMPSTI RAG</title></svelte:head>
+<svelte:head><title>API Keys — PMPSTI</title></svelte:head>
 
 <div class="h-full overflow-y-auto p-6">
   <div class="max-w-3xl mx-auto">
@@ -82,7 +82,7 @@
     <div class="flex items-center justify-between mb-6">
       <div>
         <h1 class="text-xl font-semibold">API Keys</h1>
-        <p class="text-sm text-muted-foreground mt-0.5">Kelola akses programatik ke RAG API</p>
+        <p class="text-sm text-muted-foreground mt-0.5">Kelola akses programatik ke API</p>
       </div>
       <button on:click={() => { showForm = !showForm; newlyCreatedKey = null; }}
         class="flex items-center gap-2 bg-primary text-primary-foreground text-sm font-medium px-3 py-2 rounded-lg hover:opacity-90 transition-opacity">

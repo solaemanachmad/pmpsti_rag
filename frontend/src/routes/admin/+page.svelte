@@ -1,23 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { currentUser } from '$lib/stores/auth';
+  import { admin } from '$lib/api/client';
+  import type { QueryLogStats, AdminUser, AdminDocument } from '$lib/api/client';
   import {
-    admin
-  } from '$lib/api/client';
-  import type {
-    QueryLogStats,
-    AdminUser,
-    AdminSession,
-    AdminDocument
-  } from '$lib/api/client';
-  import {
-    BarChart3, Users, MessageSquare, FileText,
-    Search, Clock, AlertCircle, Loader2,
-    Trash2, Shield, ShieldOff,
-    RefreshCw, TrendingUp
+    BarChart3, Users, FileText, List,
+    Loader2, Trash2, ShieldCheck, ShieldOff,
+    RefreshCw, AlertCircle, ChevronLeft, ChevronRight,
+    Search, Shield, LogOut
   } from 'lucide-svelte';
 
-  // ── Tab state ──
-  type Tab = 'stats' | 'users' | 'sessions' | 'documents';
+  type Tab = 'stats' | 'users' | 'documents' | 'logs';
   let activeTab: Tab = 'stats';
 
   // ── Stats ──
@@ -29,19 +23,36 @@
   let users: AdminUser[] = [];
   let usersLoading = false;
   let usersError = '';
-
-  // ── Sessions ──
-  let sessions: AdminSession[] = [];
-  let sessionsLoading = false;
-  let sessionsError = '';
+  let userSearch = '';
 
   // ── Documents ──
   let documents: AdminDocument[] = [];
   let docsLoading = false;
   let docsError = '';
 
+  // ── Logs ──
+  interface QueryLog {
+    id: number; query_text: string; detected_language: string;
+    num_results: number; search_time_ms: number;
+    user_id: number | null; session_id: string | null; created_at: string;
+  }
+  let logs: QueryLog[] = [];
+  let logsTotal = 0;
+  let logsPage = 0;
+  const LOGS_PER_PAGE = 50;
+  let logsLoading = false;
+  let logsError = '';
+
+  // ── Access guard ──
   onMount(async () => {
-    await loadStats();
+    const unsubscribe = currentUser.subscribe(async u => {
+      if (u === null) { goto('/login'); return; }
+      if (u && u.role !== 'admin') { goto('/chat'); return; }
+      if (u?.role === 'admin') {
+        unsubscribe();
+        await loadStats();
+      }
+    });
   });
 
   async function loadStats() {
@@ -52,464 +63,419 @@
   }
 
   async function loadUsers() {
+    if (users.length && !usersError) return;
     usersLoading = true; usersError = '';
-    try { users = await admin.listUsers(); }
+    try { users = await admin.users(); }
     catch (e: unknown) { usersError = e instanceof Error ? e.message : String(e); }
     finally { usersLoading = false; }
   }
 
-  async function loadSessions() {
-    sessionsLoading = true; sessionsError = '';
-    try { sessions = await admin.listSessions(); }
-    catch (e: unknown) { sessionsError = e instanceof Error ? e.message : String(e); }
-    finally { sessionsLoading = false; }
-  }
-
   async function loadDocuments() {
+    if (documents.length && !docsError) return;
     docsLoading = true; docsError = '';
-    try { documents = await admin.listDocuments(); }
+    try { documents = await admin.documents(); }
     catch (e: unknown) { docsError = e instanceof Error ? e.message : String(e); }
     finally { docsLoading = false; }
+  }
+
+  async function loadLogs(page = 0) {
+    logsLoading = true; logsError = '';
+    logsPage = page;
+    try {
+      const r = await admin.queryLogs(LOGS_PER_PAGE, page * LOGS_PER_PAGE);
+      logs = r.logs; logsTotal = r.total;
+    }
+    catch (e: unknown) { logsError = e instanceof Error ? e.message : String(e); }
+    finally { logsLoading = false; }
+  }
+
+  async function switchTab(tab: Tab) {
+    activeTab = tab;
+    if (tab === 'users') loadUsers();
+    if (tab === 'documents') loadDocuments();
+    if (tab === 'logs') loadLogs(0);
+  }
+
+  async function toggleUser(u: AdminUser) {
+    const newActive = !u.is_active;
+    try {
+      await admin.toggleUser(u.id, newActive);
+      users = users.map(x => x.id === u.id ? { ...x, is_active: newActive } : x);
+    } catch (e) { alert('Gagal: ' + e); }
   }
 
   async function setRole(u: AdminUser, role: string) {
     try {
       await admin.setRole(u.id, role);
       users = users.map(x => x.id === u.id ? { ...x, role } : x);
-    } catch (e: unknown) {
-      alert('Gagal mengubah role: ' + (e instanceof Error ? e.message : String(e)));
-    }
+    } catch (e) { alert('Gagal: ' + e); }
   }
 
-  async function toggleActive(u: AdminUser) {
+  async function deleteDoc(id: string) {
+    if (!confirm('Hapus dokumen ini?')) return;
     try {
-      await admin.toggleActive(u.id, !u.is_active);
-      users = users.map(x => x.id === u.id ? { ...x, is_active: !x.is_active } : x);
-    } catch (e: unknown) {
-      alert('Gagal mengubah status: ' + (e instanceof Error ? e.message : String(e)));
-    }
+      await admin.deleteDocument(id);
+      documents = documents.filter(d => d.id !== id);
+    } catch (e) { alert('Gagal: ' + e); }
   }
 
-  async function deleteSession(s: AdminSession) {
-    if (!confirm(`Hapus session "${s.title || 'Tanpa judul'}"?`)) return;
-    try {
-      await admin.deleteSession(s.id);
-      sessions = sessions.filter(x => x.id !== s.id);
-    } catch (e: unknown) {
-      alert('Gagal menghapus session: ' + (e instanceof Error ? e.message : String(e)));
-    }
-  }
+  $: filteredUsers = userSearch.trim()
+    ? users.filter(u =>
+        u.email.toLowerCase().includes(userSearch.toLowerCase()) ||
+        (u.display_name ?? '').toLowerCase().includes(userSearch.toLowerCase()))
+    : users;
 
-  async function deleteDocument(doc: AdminDocument) {
-    if (!confirm(`Hapus dokumen "${doc.document_id}" dan semua ${doc.chunk_count} chunk-nya?`)) return;
-    try {
-      await admin.deleteDocument(doc.document_id);
-      documents = documents.filter(d => d.document_id !== doc.document_id);
-    } catch (e: unknown) {
-      alert('Gagal menghapus dokumen: ' + (e instanceof Error ? e.message : String(e)));
-    }
-  }
-
-  function switchTab(tab: Tab) {
-    activeTab = tab;
-    if (tab === 'users' && users.length === 0) loadUsers();
-    if (tab === 'sessions' && sessions.length === 0) loadSessions();
-    if (tab === 'documents' && documents.length === 0) loadDocuments();
-  }
-
-  function pct(val: number, total: number): number {
-    if (!total) return 0;
-    return Math.round((val / total) * 100);
-  }
-
-  function fmtDate(iso: string): string {
-    return new Date(iso).toLocaleDateString('id-ID', {
-      day: 'numeric', month: 'short', year: 'numeric'
-    });
-  }
-
-  // Tab definitions (computed outside template to avoid TypeScript issues)
-  const tabs: Array<{ id: Tab; label: string; icon: typeof BarChart3 }> = [
-    { id: 'stats',     label: 'Statistik',  icon: BarChart3 },
-    { id: 'users',     label: 'Users',      icon: Users },
-    { id: 'sessions',  label: 'Sessions',   icon: MessageSquare },
-    { id: 'documents', label: 'Dokumen',    icon: FileText }
-  ];
+  $: totalLogPages = Math.ceil(logsTotal / LOGS_PER_PAGE);
 </script>
 
-<svelte:head><title>Admin — PMPSTI RAG</title></svelte:head>
+<svelte:head><title>Admin — PMPSTI</title></svelte:head>
 
-<div class="h-full overflow-y-auto">
-  <!-- Header -->
-  <div class="border-b bg-card px-6 py-4">
-    <h1 class="text-lg font-semibold">Admin Panel</h1>
-    <p class="text-sm text-muted-foreground mt-0.5">Kelola sistem RAG</p>
-  </div>
+<div class="min-h-screen bg-background">
+  <!-- Top bar -->
+  <header class="bg-[#002147] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-30 border-b border-white/10">
+    <div class="flex items-center gap-3">
+      <picture>
+        <source srcset="/ugm-logo-white.png" media="(prefers-color-scheme: dark)" />
+        <img src="/ugm-logo-white.png" alt="Logo UGM" class="w-8 h-8" />
+      </picture>
+      <div>
+        <div class="font-semibold text-sm">Panel Admin</div>
+        <div class="text-[11px] text-white/50">PMPSTI Universitas Gadjah Mada</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-white/60 hidden sm:block">{$currentUser?.email ?? ''}</span>
+      <a href="/chat" class="flex items-center gap-1.5 text-xs text-white/70 hover:text-white
+                             bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors">
+        <LogOut size={13} />
+        Kembali
+      </a>
+    </div>
+  </header>
 
-  <!-- Tabs -->
-  <div class="border-b bg-card px-6">
-    <div class="flex gap-0 -mb-px">
-      {#each tabs as tab}
+  <div class="max-w-6xl mx-auto px-4 py-6">
+
+    <!-- Tab navigation -->
+    <nav class="flex gap-1 mb-6 border-b">
+      {#each ([
+        { id: 'stats',     icon: BarChart3,  label: 'Dashboard' },
+        { id: 'users',     icon: Users,      label: 'Pengguna' },
+        { id: 'documents', icon: FileText,   label: 'Dokumen' },
+        { id: 'logs',      icon: List,       label: 'Log Query' },
+      ] as const)}
         <button
-          on:click={() => switchTab(tab.id)}
-          class="flex items-center gap-2 px-4 py-3 text-sm border-b-2 transition-colors {activeTab === tab.id
-            ? 'border-primary text-primary font-medium'
-            : 'border-transparent text-muted-foreground hover:text-foreground'}"
+          on:click={() => switchTab(item.id)}
+          class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors
+                 border-b-2 -mb-px
+                 {activeTab === item.id
+                   ? 'border-[#0055A5] text-[#0055A5]'
+                   : 'border-transparent text-muted-foreground hover:text-foreground'}"
         >
-          <svelte:component this={tab.icon} size={14} />
-          {tab.label}
+          <svelte:component this={item.icon} size={15} />
+          {item.label}
         </button>
       {/each}
-    </div>
-  </div>
+    </nav>
 
-  <div class="p-6">
-
-    <!-- ══════════ STATS ══════════ -->
+    <!-- ══ STATS ══ -->
     {#if activeTab === 'stats'}
-
       {#if statsLoading}
-        <div class="flex items-center gap-2 text-muted-foreground py-12 justify-center">
-          <Loader2 size={18} class="animate-spin" /><span class="text-sm">Memuat statistik...</span>
+        <div class="flex items-center justify-center py-16 text-muted-foreground gap-2">
+          <Loader2 size={18} class="animate-spin" /> Memuat...
         </div>
-
       {:else if statsError}
-        <div class="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-3 flex items-center gap-2">
-          <AlertCircle size={14} />{statsError}
-        </div>
-
+        <div class="bg-destructive/10 text-destructive rounded-lg p-4 text-sm">{statsError}</div>
       {:else if stats}
-        <!-- Stat cards -->
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <div class="bg-card border rounded-xl p-4">
-            <div class="flex items-center gap-2 text-muted-foreground mb-2">
-              <Search size={14} />
-              <span class="text-xs font-medium uppercase tracking-wide">Total Query</span>
+        <!-- KPI row -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          {#each [
+            { label: 'Total Query', value: stats.total_queries.toLocaleString(), color: 'text-[#0055A5]' },
+            { label: 'Query Unik', value: stats.unique_queries.toLocaleString(), color: 'text-emerald-600' },
+            { label: 'Rata-rata Hasil', value: stats.avg_results.toFixed(1), color: 'text-amber-600' },
+            { label: 'Tanpa Hasil', value: stats.zero_result_queries.toLocaleString(), color: 'text-rose-500' },
+          ] as kpi}
+            <div class="bg-card border rounded-xl p-4">
+              <div class="text-xs text-muted-foreground mb-1">{kpi.label}</div>
+              <div class="text-2xl font-bold {kpi.color}">{kpi.value}</div>
             </div>
-            <p class="text-xl font-semibold">{stats.total_queries.toLocaleString()}</p>
-          </div>
-          <div class="bg-card border rounded-xl p-4">
-            <div class="flex items-center gap-2 text-muted-foreground mb-2">
-              <TrendingUp size={14} />
-              <span class="text-xs font-medium uppercase tracking-wide">Query Unik</span>
-            </div>
-            <p class="text-xl font-semibold">{stats.unique_queries.toLocaleString()}</p>
-          </div>
-          <div class="bg-card border rounded-xl p-4">
-            <div class="flex items-center gap-2 text-muted-foreground mb-2">
-              <Clock size={14} />
-              <span class="text-xs font-medium uppercase tracking-wide">Rata-rata Waktu</span>
-            </div>
-            <p class="text-xl font-semibold">{Math.round(stats.avg_search_time_ms)} ms</p>
-          </div>
-          <div class="bg-card border rounded-xl p-4">
-            <div class="flex items-center gap-2 text-muted-foreground mb-2">
-              <AlertCircle size={14} />
-              <span class="text-xs font-medium uppercase tracking-wide">Nol Hasil</span>
-            </div>
-            <p class="text-xl font-semibold">
-              {stats.zero_result_queries}
-              <span class="text-sm font-normal text-muted-foreground">
-                ({pct(stats.zero_result_queries, stats.total_queries)}%)
-              </span>
-            </p>
-          </div>
+          {/each}
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-          <!-- Queries per day -->
+        <div class="grid sm:grid-cols-2 gap-4">
+          <!-- Query per hari -->
           <div class="bg-card border rounded-xl p-4">
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-sm font-medium">Query per hari</h2>
-              <button on:click={loadStats} class="text-muted-foreground hover:text-foreground p-1 rounded transition-colors">
-                <RefreshCw size={13} />
-              </button>
-            </div>
-            {#if stats.queries_per_day.length === 0}
-              <p class="text-sm text-muted-foreground text-center py-4">Belum ada data</p>
-            {:else}
-              {@const maxVal = Math.max(...stats.queries_per_day.map(([, n]) => n), 1)}
-              <div class="space-y-1.5">
-                {#each stats.queries_per_day.slice(0, 10) as [day, count]}
-                  <div class="flex items-center gap-2 text-xs">
-                    <span class="text-muted-foreground w-20 shrink-0">{day}</span>
-                    <div class="flex-1 bg-muted rounded-full h-1.5 overflow-hidden">
-                      <div class="h-full bg-primary rounded-full transition-all" style="width:{pct(count, maxVal)}%"></div>
+            <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
+              <BarChart3 size={14} class="text-[#0055A5]" />
+              Query 30 Hari Terakhir
+            </h3>
+            <div class="space-y-1.5 max-h-48 overflow-y-auto">
+              {#each stats.queries_per_day.slice(0, 30) as [day, count]}
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="text-muted-foreground w-24 shrink-0">{day}</span>
+                  <div class="flex-1 bg-muted rounded-full h-2 overflow-hidden">
+                    <div class="h-full bg-[#0055A5] rounded-full"
+                         style="width: {Math.min(100, (count / Math.max(...stats.queries_per_day.map(x => x[1]))) * 100)}%">
                     </div>
-                    <span class="w-6 text-right font-medium">{count}</span>
                   </div>
-                {/each}
-              </div>
-            {/if}
+                  <span class="font-medium w-8 text-right">{count}</span>
+                </div>
+              {/each}
+            </div>
           </div>
 
           <!-- Top queries -->
           <div class="bg-card border rounded-xl p-4">
-            <h2 class="text-sm font-medium mb-4">Query terpopuler</h2>
-            {#if stats.top_queries.length === 0}
-              <p class="text-sm text-muted-foreground text-center py-4">Belum ada data</p>
-            {:else}
-              <div class="space-y-2">
-                {#each stats.top_queries.slice(0, 8) as [q, count], i}
-                  <div class="flex items-center gap-2 text-xs">
-                    <span class="w-5 text-center text-muted-foreground shrink-0">{i + 1}</span>
-                    <span class="flex-1 truncate" title={q}>{q}</span>
-                    <span class="bg-muted px-1.5 py-0.5 rounded font-medium shrink-0">{count}×</span>
-                  </div>
-                {/each}
-              </div>
-            {/if}
+            <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
+              <Search size={14} class="text-[#0055A5]" />
+              Query Terpopuler
+            </h3>
+            <div class="space-y-2 max-h-48 overflow-y-auto">
+              {#each stats.top_queries.slice(0, 10) as [q, count]}
+                <div class="flex items-start gap-2 text-xs">
+                  <span class="shrink-0 px-1.5 py-0.5 rounded bg-[#0055A5]/10 text-[#0055A5] font-semibold">{count}×</span>
+                  <span class="text-muted-foreground line-clamp-2 leading-relaxed">{q}</span>
+                </div>
+              {/each}
+            </div>
           </div>
         </div>
 
-        <!-- Language + Domain distribution -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div class="bg-card border rounded-xl p-4">
-            <h2 class="text-sm font-medium mb-4">Distribusi bahasa</h2>
-            {#if stats.language_distribution.length === 0}
-              <p class="text-sm text-muted-foreground text-center py-4">Belum ada data</p>
-            {:else}
-              {@const total = stats.language_distribution.reduce((a, [, n]) => a + n, 0)}
-              <div class="space-y-2">
-                {#each stats.language_distribution as [label, count]}
-                  <div class="flex items-center gap-2 text-xs">
-                    <span class="w-24 text-muted-foreground truncate capitalize shrink-0">{label || 'unknown'}</span>
-                    <div class="flex-1 bg-muted rounded-full h-1.5 overflow-hidden">
-                      <div class="h-full bg-primary/70 rounded-full transition-all" style="width:{pct(count, total)}%"></div>
-                    </div>
-                    <span class="w-10 text-right text-muted-foreground">{pct(count, total)}%</span>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-          <div class="bg-card border rounded-xl p-4">
-            <h2 class="text-sm font-medium mb-4">Distribusi domain</h2>
-            {#if stats.domain_distribution.length === 0}
-              <p class="text-sm text-muted-foreground text-center py-4">Belum ada data</p>
-            {:else}
-              {@const total = stats.domain_distribution.reduce((a, [, n]) => a + n, 0)}
-              <div class="space-y-2">
-                {#each stats.domain_distribution as [label, count]}
-                  <div class="flex items-center gap-2 text-xs">
-                    <span class="w-24 text-muted-foreground truncate capitalize shrink-0">{label || 'unknown'}</span>
-                    <div class="flex-1 bg-muted rounded-full h-1.5 overflow-hidden">
-                      <div class="h-full bg-primary/70 rounded-full transition-all" style="width:{pct(count, total)}%"></div>
-                    </div>
-                    <span class="w-10 text-right text-muted-foreground">{pct(count, total)}%</span>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
+        <div class="mt-4 bg-card border rounded-xl p-4">
+          <h3 class="text-sm font-semibold mb-2">Rata-rata Waktu Pencarian</h3>
+          <p class="text-2xl font-bold text-emerald-600">{stats.avg_search_time_ms.toFixed(0)} <span class="text-sm font-normal text-muted-foreground">ms</span></p>
         </div>
       {/if}
 
-    <!-- ══════════ USERS ══════════ -->
+    <!-- ══ USERS ══ -->
     {:else if activeTab === 'users'}
-      <div class="flex items-center justify-between mb-4">
-        <p class="text-sm text-muted-foreground">{users.length} user terdaftar</p>
-        <button
-          on:click={loadUsers}
-          class="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border rounded-lg px-3 py-1.5 transition-colors"
-        >
-          <RefreshCw size={12} />Refresh
+      <div class="flex items-center gap-3 mb-4">
+        <div class="relative flex-1 max-w-xs">
+          <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input bind:value={userSearch} placeholder="Cari email / nama..."
+                 class="w-full pl-8 pr-3 py-2 text-sm border rounded-lg bg-background outline-none
+                        focus:ring-2 focus:ring-[#0055A5]/40 focus:border-[#0055A5]/40" />
+        </div>
+        <button on:click={() => { users = []; loadUsers(); }}
+                class="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground
+                       border rounded-lg px-3 py-2 transition-colors">
+          <RefreshCw size={13} /> Refresh
         </button>
       </div>
 
       {#if usersLoading}
-        <div class="flex items-center gap-2 text-muted-foreground py-12 justify-center">
-          <Loader2 size={18} class="animate-spin" /><span class="text-sm">Memuat...</span>
+        <div class="flex items-center justify-center py-12 text-muted-foreground gap-2">
+          <Loader2 size={18} class="animate-spin" /> Memuat...
         </div>
       {:else if usersError}
-        <div class="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-3">{usersError}</div>
+        <div class="bg-destructive/10 text-destructive rounded-lg p-4 text-sm">{usersError}</div>
       {:else}
-        <div class="border rounded-xl overflow-hidden bg-card">
+        <div class="bg-card border rounded-xl overflow-hidden">
           <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b bg-muted/40">
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Email</th>
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Nama</th>
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Role</th>
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Status</th>
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Bergabung</th>
-                <th class="px-4 py-3"></th>
+            <thead class="bg-muted/50 text-muted-foreground text-xs uppercase tracking-wide">
+              <tr>
+                <th class="px-4 py-2.5 text-left">Pengguna</th>
+                <th class="px-4 py-2.5 text-left hidden sm:table-cell">Role</th>
+                <th class="px-4 py-2.5 text-left hidden md:table-cell">Status</th>
+                <th class="px-4 py-2.5 text-left hidden md:table-cell">Bergabung</th>
+                <th class="px-4 py-2.5 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody class="divide-y">
-              {#each users as u (u.id)}
-                <tr class="hover:bg-muted/20 transition-colors">
-                  <td class="px-4 py-3 font-medium text-sm">{u.email}</td>
-                  <td class="px-4 py-3 text-muted-foreground hidden md:table-cell">{u.display_name || '—'}</td>
+              {#each filteredUsers as u}
+                <tr class="hover:bg-muted/30 transition-colors">
                   <td class="px-4 py-3">
-                    <select
-                      value={u.role}
-                      on:change={(e) => setRole(u, e.currentTarget.value)}
-                      class="text-xs border rounded px-2 py-1 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                    >
+                    <div class="font-medium text-foreground">{u.display_name || '—'}</div>
+                    <div class="text-xs text-muted-foreground">{u.email}</div>
+                  </td>
+                  <td class="px-4 py-3 hidden sm:table-cell">
+                    <select value={u.role}
+                            on:change={e => setRole(u, (e.target as HTMLSelectElement).value)}
+                            class="text-xs border rounded px-2 py-1 bg-background
+                                   {u.role === 'admin' ? 'text-[#0055A5] font-semibold' : ''}">
                       <option value="user">user</option>
                       <option value="admin">admin</option>
                     </select>
                   </td>
-                  <td class="px-4 py-3">
-                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium {u.is_active
-                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
-                      : 'bg-muted text-muted-foreground'}">
+                  <td class="px-4 py-3 hidden md:table-cell">
+                    <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium
+                                 {u.is_active ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                              : 'bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400'}">
                       {u.is_active ? 'Aktif' : 'Nonaktif'}
                     </span>
                   </td>
-                  <td class="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell">{fmtDate(u.created_at)}</td>
+                  <td class="px-4 py-3 hidden md:table-cell text-xs text-muted-foreground">
+                    {u.created_at?.slice(0,10) ?? '—'}
+                  </td>
                   <td class="px-4 py-3 text-right">
-                    <button
-                      on:click={() => toggleActive(u)}
-                      class="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                      title={u.is_active ? 'Nonaktifkan' : 'Aktifkan'}
-                    >
-                      {#if u.is_active}
-                        <ShieldOff size={14} />
-                      {:else}
-                        <Shield size={14} />
-                      {/if}
+                    <button on:click={() => toggleUser(u)}
+                            title={u.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                            class="p-1.5 rounded-lg transition-colors
+                                   {u.is_active
+                                     ? 'text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20'
+                                     : 'text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'}">
+                      {#if u.is_active}<ShieldOff size={15}/>{:else}<ShieldCheck size={15}/>{/if}
                     </button>
                   </td>
                 </tr>
               {/each}
+              {#if filteredUsers.length === 0}
+                <tr><td colspan="5" class="px-4 py-8 text-center text-muted-foreground text-sm">
+                  Tidak ada pengguna ditemukan.
+                </td></tr>
+              {/if}
             </tbody>
           </table>
-          {#if users.length === 0 && !usersLoading}
-            <div class="text-center py-12 text-sm text-muted-foreground">Belum ada user</div>
-          {/if}
         </div>
+        <p class="text-xs text-muted-foreground mt-2">{filteredUsers.length} dari {users.length} pengguna</p>
       {/if}
 
-    <!-- ══════════ SESSIONS ══════════ -->
-    {:else if activeTab === 'sessions'}
-      <div class="flex items-center justify-between mb-4">
-        <p class="text-sm text-muted-foreground">{sessions.length} session</p>
-        <button
-          on:click={loadSessions}
-          class="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border rounded-lg px-3 py-1.5 transition-colors"
-        >
-          <RefreshCw size={12} />Refresh
-        </button>
-      </div>
-
-      {#if sessionsLoading}
-        <div class="flex items-center gap-2 text-muted-foreground py-12 justify-center">
-          <Loader2 size={18} class="animate-spin" /><span class="text-sm">Memuat...</span>
-        </div>
-      {:else if sessionsError}
-        <div class="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-3">{sessionsError}</div>
-      {:else}
-        <div class="border rounded-xl overflow-hidden bg-card">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b bg-muted/40">
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Judul</th>
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">User</th>
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Pesan</th>
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Terakhir aktif</th>
-                <th class="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody class="divide-y">
-              {#each sessions as s (s.id)}
-                <tr class="hover:bg-muted/20 transition-colors">
-                  <td class="px-4 py-3 font-medium max-w-[200px] truncate">{s.title || 'Tanpa judul'}</td>
-                  <td class="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell">{s.user_email}</td>
-                  <td class="px-4 py-3 text-center">
-                    <span class="bg-muted px-2 py-0.5 rounded text-xs">{s.message_count}</span>
-                  </td>
-                  <td class="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell">{fmtDate(s.updated_at)}</td>
-                  <td class="px-4 py-3 text-right">
-                    <button
-                      on:click={() => deleteSession(s)}
-                      class="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-          {#if sessions.length === 0 && !sessionsLoading}
-            <div class="text-center py-12 text-sm text-muted-foreground">Belum ada session</div>
-          {/if}
-        </div>
-      {/if}
-
-    <!-- ══════════ DOCUMENTS ══════════ -->
+    <!-- ══ DOCUMENTS ══ -->
     {:else if activeTab === 'documents'}
-      <div class="flex items-center justify-between mb-4">
-        <p class="text-sm text-muted-foreground">
-          {documents.length} dokumen ·
-          {documents.reduce((a, d) => a + d.chunk_count, 0).toLocaleString()} chunks
-        </p>
-        <button
-          on:click={loadDocuments}
-          class="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border rounded-lg px-3 py-1.5 transition-colors"
-        >
-          <RefreshCw size={12} />Refresh
+      <div class="flex justify-between items-center mb-4">
+        <p class="text-sm text-muted-foreground">{documents.length} dokumen terindeks</p>
+        <button on:click={() => { documents = []; loadDocuments(); }}
+                class="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground
+                       border rounded-lg px-3 py-2 transition-colors">
+          <RefreshCw size={13} /> Refresh
         </button>
       </div>
 
       {#if docsLoading}
-        <div class="flex items-center gap-2 text-muted-foreground py-12 justify-center">
-          <Loader2 size={18} class="animate-spin" /><span class="text-sm">Memuat...</span>
+        <div class="flex items-center justify-center py-12 text-muted-foreground gap-2">
+          <Loader2 size={18} class="animate-spin" /> Memuat...
         </div>
       {:else if docsError}
-        <div class="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-3">{docsError}</div>
+        <div class="bg-destructive/10 text-destructive rounded-lg p-4 text-sm">{docsError}</div>
       {:else}
-        <div class="border rounded-xl overflow-hidden bg-card">
+        <div class="bg-card border rounded-xl overflow-hidden">
           <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b bg-muted/40">
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Dokumen</th>
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Kategori</th>
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">Tipe</th>
-                <th class="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Chunks</th>
-                <th class="px-4 py-3"></th>
+            <thead class="bg-muted/50 text-muted-foreground text-xs uppercase tracking-wide">
+              <tr>
+                <th class="px-4 py-2.5 text-left">Judul</th>
+                <th class="px-4 py-2.5 text-left hidden sm:table-cell">Kategori</th>
+                <th class="px-4 py-2.5 text-left hidden md:table-cell">Chunk</th>
+                <th class="px-4 py-2.5 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody class="divide-y">
-              {#each documents as doc (doc.document_id)}
-                <tr class="hover:bg-muted/20 transition-colors">
+              {#each documents as doc}
+                <tr class="hover:bg-muted/30 transition-colors">
                   <td class="px-4 py-3">
-                    <div class="font-medium truncate max-w-[200px]" title={doc.title || doc.document_id}>
-                      {doc.title || doc.document_id}
-                    </div>
-                    <div class="text-xs text-muted-foreground truncate max-w-[200px]" title={doc.source_url}>
-                      {doc.source_url || doc.document_id}
-                    </div>
+                    <div class="font-medium line-clamp-1">{doc.title || doc.id}</div>
+                    {#if doc.source_url}
+                      <a href={doc.source_url} target="_blank" rel="noopener noreferrer"
+                         class="text-xs text-[#0055A5] hover:underline line-clamp-1">
+                        {doc.source_url}
+                      </a>
+                    {/if}
+                  </td>
+                  <td class="px-4 py-3 hidden sm:table-cell">
+                    <span class="text-xs text-muted-foreground">{doc.category}</span>
                   </td>
                   <td class="px-4 py-3 hidden md:table-cell">
-                    <span class="bg-muted px-2 py-0.5 rounded text-xs">{doc.category || '—'}</span>
-                  </td>
-                  <td class="px-4 py-3 text-muted-foreground text-xs hidden sm:table-cell uppercase">
-                    {doc.document_type || '—'}
-                  </td>
-                  <td class="px-4 py-3">
-                    <span class="bg-muted px-2 py-0.5 rounded text-xs font-mono">{doc.chunk_count}</span>
+                    <span class="text-xs font-mono text-muted-foreground">{doc.chunk_count ?? '—'}</span>
                   </td>
                   <td class="px-4 py-3 text-right">
-                    <button
-                      on:click={() => deleteDocument(doc)}
-                      class="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                    >
-                      <Trash2 size={14} />
+                    <button on:click={() => deleteDoc(doc.id)}
+                            class="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50
+                                   dark:hover:bg-rose-900/20 transition-colors">
+                      <Trash2 size={15} />
                     </button>
                   </td>
                 </tr>
               {/each}
+              {#if documents.length === 0}
+                <tr><td colspan="4" class="px-4 py-8 text-center text-muted-foreground text-sm">
+                  Belum ada dokumen.
+                </td></tr>
+              {/if}
             </tbody>
           </table>
-          {#if documents.length === 0 && !docsLoading}
-            <div class="text-center py-12 text-sm text-muted-foreground">Belum ada dokumen</div>
-          {/if}
         </div>
       {/if}
 
+    <!-- ══ LOGS ══ -->
+    {:else if activeTab === 'logs'}
+      <div class="flex justify-between items-center mb-4">
+        <p class="text-sm text-muted-foreground">
+          {logsTotal.toLocaleString()} total query ·
+          Halaman {logsPage + 1} dari {totalLogPages || 1}
+        </p>
+        <button on:click={() => loadLogs(logsPage)}
+                class="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground
+                       border rounded-lg px-3 py-2 transition-colors">
+          <RefreshCw size={13} /> Refresh
+        </button>
+      </div>
+
+      {#if logsLoading}
+        <div class="flex items-center justify-center py-12 text-muted-foreground gap-2">
+          <Loader2 size={18} class="animate-spin" /> Memuat...
+        </div>
+      {:else if logsError}
+        <div class="bg-destructive/10 text-destructive rounded-lg p-4 text-sm">{logsError}</div>
+      {:else}
+        <div class="bg-card border rounded-xl overflow-hidden mb-4">
+          <table class="w-full text-sm">
+            <thead class="bg-muted/50 text-muted-foreground text-xs uppercase tracking-wide">
+              <tr>
+                <th class="px-4 py-2.5 text-left">Query</th>
+                <th class="px-4 py-2.5 text-right hidden sm:table-cell">Hasil</th>
+                <th class="px-4 py-2.5 text-right hidden sm:table-cell">Waktu</th>
+                <th class="px-4 py-2.5 text-right hidden md:table-cell">Tanggal</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              {#each logs as log}
+                <tr class="hover:bg-muted/30 transition-colors">
+                  <td class="px-4 py-3">
+                    <p class="line-clamp-2 text-foreground leading-relaxed">{log.query_text}</p>
+                    <span class="text-[10px] text-muted-foreground/70 uppercase tracking-wide">
+                      {log.detected_language}
+                    </span>
+                  </td>
+                  <td class="px-4 py-3 text-right hidden sm:table-cell">
+                    <span class="text-xs font-mono {log.num_results === 0 ? 'text-rose-500' : 'text-emerald-600'}">
+                      {log.num_results}
+                    </span>
+                  </td>
+                  <td class="px-4 py-3 text-right hidden sm:table-cell">
+                    <span class="text-xs font-mono text-muted-foreground">{log.search_time_ms}ms</span>
+                  </td>
+                  <td class="px-4 py-3 text-right hidden md:table-cell text-xs text-muted-foreground">
+                    {log.created_at?.slice(0,16).replace('T', ' ') ?? '—'}
+                  </td>
+                </tr>
+              {/each}
+              {#if logs.length === 0}
+                <tr><td colspan="4" class="px-4 py-8 text-center text-muted-foreground text-sm">
+                  Belum ada log.
+                </td></tr>
+              {/if}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination -->
+        {#if totalLogPages > 1}
+          <div class="flex items-center justify-center gap-2">
+            <button disabled={logsPage === 0}
+                    on:click={() => loadLogs(logsPage - 1)}
+                    class="p-2 rounded-lg border hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              <ChevronLeft size={16} />
+            </button>
+            <span class="text-sm text-muted-foreground px-2">
+              {logsPage + 1} / {totalLogPages}
+            </span>
+            <button disabled={logsPage >= totalLogPages - 1}
+                    on:click={() => loadLogs(logsPage + 1)}
+                    class="p-2 rounded-lg border hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        {/if}
+      {/if}
     {/if}
+
   </div>
 </div>

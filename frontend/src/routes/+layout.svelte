@@ -65,7 +65,7 @@
       <div class="flex items-center gap-2.5 px-4 py-4 border-b bg-[#002147]">
         <img src="/ugm-logo-white.png" alt="Logo UGM" class="w-8 h-8 shrink-0" />
         <div class="leading-tight">
-          <div class="font-semibold text-sm text-white">PMPSTI RAG</div>
+          <div class="font-semibold text-sm text-white">PMPSTI</div>
           <div class="text-[10px] text-white/50 leading-none">Universitas Gadjah Mada</div>
         </div>
       </div>
@@ -106,7 +106,7 @@
       <div class="flex items-center gap-2">
         <img src="/ugm-logo-white.png" alt="Logo UGM" class="w-7 h-7 shrink-0" />
         <div class="leading-tight">
-          <div class="font-semibold text-sm">PMPSTI RAG</div>
+          <div class="font-semibold text-sm">PMPSTI</div>
         </div>
       </div>
       <button on:click={() => menuOpen = !menuOpen} class="p-1.5 rounded-md hover:bg-muted">

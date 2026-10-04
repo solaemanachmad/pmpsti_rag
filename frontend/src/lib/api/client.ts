@@ -1,16 +1,9 @@
 // Deteksi API URL: env var (Vercel) > HF Space otomatis > proxy lokal
 function resolveApiBase(): string {
-  // 1. Dari environment variable (set di Vercel/CF Pages)
   if (import.meta.env.PUBLIC_API_URL) return import.meta.env.PUBLIC_API_URL;
-  // 2. Di browser: deteksi apakah running di HF Space (*.hf.space)
   if (typeof window !== 'undefined' && window.location.hostname.endsWith('.hf.space')) {
-    // Frontend HF Space → panggil backend HF Space langsung
-    // Format hostname: <user>-<space-name>.hf.space
-    // Kita expect PUBLIC_HF_BACKEND_URL diset saat deploy frontend
-    // Fallback: pakai origin yang sama (jika monorepo di satu space)
     return import.meta.env.PUBLIC_HF_BACKEND_URL || '';
   }
-  // 3. Dev lokal: gunakan Vite proxy (kosong = relative /api)
   return '';
 }
 const BASE = resolveApiBase() + '/api';
@@ -87,6 +80,9 @@ export const admin = {
     request<QueryLogStats>('/admin/stats'),
 
   // Users
+  users: () =>
+    request<AdminUser[]>('/admin/users'),
+  /** @deprecated use users() */
   listUsers: () =>
     request<AdminUser[]>('/admin/users'),
   setRole: (id: number, role: string) =>
@@ -94,6 +90,12 @@ export const admin = {
       method: 'PATCH',
       body: JSON.stringify({ role })
     }),
+  toggleUser: (id: number, is_active: boolean) =>
+    request<{ message: string }>(`/admin/users/${id}/active`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_active })
+    }),
+  /** @deprecated use toggleUser() */
   toggleActive: (id: number, is_active: boolean) =>
     request<{ message: string }>(`/admin/users/${id}/active`, {
       method: 'PATCH',
@@ -107,13 +109,20 @@ export const admin = {
     request(`/admin/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   // Documents
+  documents: () =>
+    request<AdminDocument[]>('/admin/documents'),
+  /** @deprecated use documents() */
   listDocuments: () =>
     request<AdminDocument[]>('/admin/documents'),
   deleteDocument: (document_id: string) =>
     request<{ deleted_chunks: number }>(
       `/admin/documents/${encodeURIComponent(document_id)}`,
       { method: 'DELETE' }
-    )
+    ),
+
+  // Query logs
+  queryLogs: (limit = 50, offset = 0) =>
+    request<{ logs: AdminQueryLog[]; total: number }>(`/admin/logs?limit=${limit}&offset=${offset}`)
 };
 
 // ── Streaming ask ──
@@ -271,6 +280,7 @@ export interface AdminSession {
   updated_at: string;
 }
 export interface AdminDocument {
+  id: string;
   document_id: string;
   title: string;
   document_type: string;
@@ -278,6 +288,17 @@ export interface AdminDocument {
   source_url: string;
   chunk_count: number;
 }
+export interface AdminQueryLog {
+  id: number;
+  query_text: string;
+  detected_language: string;
+  num_results: number;
+  search_time_ms: number;
+  user_id: number | null;
+  session_id: string | null;
+  created_at: string;
+}
+
 // ── Public ask (guest, no auth) ──
 export interface GuestAskResponse {
   answer: string;
@@ -324,7 +345,6 @@ export function askPublic(
       const data: GuestAskResponse = json.data ?? json;
       if (cancelled) return;
 
-      // Word-by-word streaming simulation
       const words = data.answer.split(' ');
       for (let i = 0; i < words.length; i++) {
         if (cancelled) return;

@@ -143,7 +143,7 @@
         <img src="/ugm-logo-white.png" alt="Logo UGM" class="w-9 h-9 shrink-0" />
       </picture>
       <div class="leading-tight">
-        <div class="font-semibold text-sm tracking-wide">PMPSTI RAG</div>
+        <div class="font-semibold text-sm tracking-wide">PMPSTI</div>
         <div class="text-[11px] text-white/60">Universitas Gadjah Mada</div>
       </div>
     </div>

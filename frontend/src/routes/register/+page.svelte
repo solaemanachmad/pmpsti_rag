@@ -31,7 +31,7 @@
   }
 </script>
 
-<svelte:head><title>Daftar — PMPSTI RAG</title></svelte:head>
+<svelte:head><title>Daftar — PMPSTI</title></svelte:head>
 
 <div class="min-h-screen flex flex-col bg-background">
   <div class="bg-[#002147] h-1.5 w-full"></div>
@@ -45,7 +45,7 @@
           <img src="/ugm-logo-blue.png" alt="Logo UGM" class="w-16 h-16" />
         </picture>
       <div class="text-center">
-        <div class="font-bold text-lg text-foreground">PMPSTI RAG</div>
+        <div class="font-bold text-lg text-foreground">PMPSTI</div>
         <div class="text-xs text-muted-foreground">Asisten Akademik — Universitas Gadjah Mada</div>
       </div>
     </div>

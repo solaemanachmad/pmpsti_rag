@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use db::Database;
 use handlers::AppState;
+use db::seed_admin_user;
 use rag::{LlmConfig, RagEngine};
 use search::SearchEngine;
 
@@ -65,7 +66,7 @@ async fn main() -> std::io::Result<()> {
     let cfg = Config::from_env();
 
     log::info!("═══════════════════════════════════════");
-    log::info!("  PMPSTI RAG API");
+    log::info!("  PMPSTI API");
     log::info!("  Database : {}", cfg.database_url);
     log::info!("  LLM      : {} ({})", if cfg.llm_backend == "gemini" { &cfg.gemini_model } else { &cfg.llm_model }, cfg.llm_backend);
     log::info!("  Listen   : {}:{}", cfg.host, cfg.port);
@@ -128,6 +129,16 @@ async fn main() -> std::io::Result<()> {
             )
             .wrap(middleware::Logger::default())
             .wrap(
+                actix_web::middleware::DefaultHeaders::new()
+                    .add(("X-Content-Type-Options", "nosniff"))
+                    .add(("X-Frame-Options", "DENY"))
+                    .add(("X-XSS-Protection", "1; mode=block"))
+                    .add(("Referrer-Policy", "strict-origin-when-cross-origin"))
+                    .add(("Permissions-Policy", "camera=(), microphone=(), geolocation=()"))
+                    .add(("Content-Security-Policy",
+                        "default-src 'self'; script-src 'self'; object-src 'none'"))
+            )
+            .wrap(
                 actix_cors::Cors::default()
                     .allow_any_origin()
                     .allow_any_method()
@@ -164,6 +175,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/admin/sessions/{id}",      web::delete().to(handlers::admin_delete_session))
                     .route("/admin/documents",          web::get().to(handlers::admin_list_documents))
                     .route("/admin/documents/{id}",     web::delete().to(handlers::admin_delete_document))
+                    .route("/admin/logs",                web::get().to(handlers::admin_query_logs))
             )
     })
     .bind(&addr)?

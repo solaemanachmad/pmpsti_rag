@@ -893,3 +893,25 @@ fn clean_source_title(title: &str, subcategory: &str) -> String {
     title.to_string()
 }
 
+
+// ── Admin: query logs ──────────────────────────────────────────────
+pub async fn admin_query_logs(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    let query = web::Query::<std::collections::HashMap<String, String>>::from_query(req.query_string())
+        .unwrap_or_default();
+    let limit:  i64 = query.get("limit").and_then(|v| v.parse().ok()).unwrap_or(50).min(200);
+    let offset: i64 = query.get("offset").and_then(|v| v.parse().ok()).unwrap_or(0).max(0);
+
+    match state.db.admin_list_query_logs(limit, offset).await {
+        Ok((logs, total)) => HttpResponse::Ok().json(ApiSuccess::new(serde_json::json!({
+            "logs": logs,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }))),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, format!("{e}"))),
+    }
+}
