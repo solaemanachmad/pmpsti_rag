@@ -8,16 +8,8 @@
     BarChart3, Users, FileText, List,
     Loader2, Trash2, ShieldCheck, ShieldOff,
     RefreshCw, ChevronLeft, ChevronRight,
-    Search, LogOut, Moon, Sun, UserPlus
+    Search, UserPlus
   } from 'lucide-svelte';
-
-  let dark = false;
-  onMount(() => { dark = document.documentElement.classList.contains('dark'); });
-  function toggleDark() {
-    dark = !dark;
-    document.documentElement.classList.toggle('dark', dark);
-    localStorage.setItem('theme', dark ? 'dark' : 'light');
-  }
 
   // ── Add User ──
   let showAddUser = false;
@@ -183,34 +175,13 @@
 
 <svelte:head><title>Admin — PMPSTI</title></svelte:head>
 
-<div class="min-h-screen bg-background">
-  <!-- Top bar -->
-  <header class="bg-[#002147] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-30 border-b border-white/10">
-    <div class="flex items-center gap-3">
-      <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-10 w-auto" />
-      <div>
-        <div class="font-bold text-sm">Panel Admin</div>
-        <div class="text-[11px] text-white/50">DTETI — Teknik Elektro & Teknologi Informasi UGM</div>
-      </div>
+<div class="h-full overflow-y-auto">
+  <div class="max-w-5xl mx-auto px-4 py-6">
+    <!-- Page title -->
+    <div class="mb-6">
+      <h1 class="text-xl font-bold text-foreground">Panel Admin</h1>
+      <p class="text-sm text-muted-foreground mt-0.5">Kelola pengguna, dokumen, dan pantau aktivitas sistem</p>
     </div>
-    <div class="flex items-center gap-2">
-      <span class="text-xs text-white/60 hidden sm:block">{$currentUser?.email ?? ''}</span>
-      <div class="flex items-center gap-2">
-        <button on:click={toggleDark}
-          title="{dark ? 'Light mode' : 'Dark mode'}"
-          class="p-1.5 rounded-lg text-white/70 hover:text-white bg-white/10 hover:bg-white/20 transition-colors">
-          {#if dark}<Sun size={14} />{:else}<Moon size={14} />{/if}
-        </button>
-        <a href="/chat" class="flex items-center gap-1.5 text-xs text-white/70 hover:text-white
-                               bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors">
-          <LogOut size={13} />
-          Kembali
-        </a>
-      </div>
-    </div>
-  </header>
-
-  <div class="max-w-6xl mx-auto px-4 py-6">
 
     <!-- Tab navigation -->
     <nav class="flex gap-1 mb-6 border-b">

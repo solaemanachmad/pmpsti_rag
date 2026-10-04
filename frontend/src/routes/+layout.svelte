@@ -11,9 +11,6 @@
   let dark = false;
 
   const publicRoutes = ['/', '/login', '/register'];
-  // Halaman yang punya header sendiri — topbar layout disembunyikan
-  const standaloneRoutes = ['/admin'];
-
   onMount(async () => {
     // Sync dark state from DOM (set by inline script in app.html)
     dark = document.documentElement.classList.contains('dark');
@@ -48,13 +45,17 @@
 
   $: isPublic = publicRoutes.includes($page.url.pathname);
   $: isAdmin = $currentUser?.role === 'admin';
-  $: isStandalone = standaloneRoutes.some(r => $page.url.pathname.startsWith(r));
-
   const navBase = 'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/20 hover:text-foreground transition-colors cursor-pointer w-full';
   const navActive = 'bg-accent/20 text-foreground font-medium';
 
+  // Exact match for single-segment paths to avoid /chat matching /chat/...
+  // and "/" matching everything
   function navClass(path: string) {
-    const active = $page.url.pathname.startsWith(path);
+    const pathname = $page.url.pathname;
+    // Exact match for these routes; startsWith for any sub-routes
+    const active = path === '/'
+      ? pathname === '/'
+      : pathname === path || pathname.startsWith(path + '/');
     return `${navBase} ${active ? navActive : ''}`;
   }
 </script>
@@ -107,8 +108,7 @@
       </div>
     </aside>
 
-    <!-- Topbar mobile (disembunyikan di halaman yang punya header sendiri) -->
-    {#if !isStandalone}
+    <!-- Topbar mobile -->
     <div class="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 h-14 border-b bg-background">
       <div class="flex items-center gap-2">
         <img src="/ugm-logo-blue.png"  alt="Logo UGM" class="h-9 w-auto shrink-0 dark:hidden" />
@@ -153,9 +153,7 @@
         </button>
       </div>
     {/if}
-
-    {/if}
-    <main class="flex-1 overflow-hidden {isStandalone ? '' : 'mt-14 md:mt-0'}">
+    <main class="flex-1 overflow-hidden mt-14 md:mt-0">
       <slot />
     </main>
   </div>
