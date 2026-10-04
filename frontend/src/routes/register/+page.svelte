@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ThemeToggle from '$lib/components/ThemeToggle.svelte';
   import { auth } from '$lib/api/client';
   import { Loader2, MailCheck } from 'lucide-svelte';
 
@@ -32,6 +33,10 @@
 </script>
 
 <svelte:head><title>Daftar — PMPSTI</title></svelte:head>
+
+<div class="fixed top-4 right-4 z-50">
+  <ThemeToggle />
+</div>
 
 <div class="min-h-screen flex flex-col bg-background">
   <div class="bg-[#002147] h-1.5 w-full"></div>

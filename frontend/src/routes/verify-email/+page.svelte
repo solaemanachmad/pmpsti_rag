@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ThemeToggle from '$lib/components/ThemeToggle.svelte';
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { CheckCircle2, XCircle, Loader2 } from 'lucide-svelte';
@@ -28,6 +29,10 @@
 </script>
 
 <svelte:head><title>Verifikasi Email — PMPSTI</title></svelte:head>
+
+<div class="fixed top-4 right-4 z-50">
+  <ThemeToggle />
+</div>
 
 <div class="min-h-screen flex flex-col bg-background">
   <div class="bg-[#002147] h-1.5 w-full"></div>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import ThemeToggle from '$lib/components/ThemeToggle.svelte';
   import { isLoggedIn } from '$lib/stores/auth';
   import { askPublic } from '$lib/api/client';
   import type { GuestAskResponse, SourceRef } from '$lib/api/client';
@@ -148,6 +149,7 @@
       </div>
     </div>
     <nav class="flex items-center gap-1.5">
+      <ThemeToggle />
       <a href="/login"
         class="flex items-center gap-1.5 text-sm text-white/80 hover:text-white hover:bg-white/10
                px-3 py-1.5 rounded-lg transition-colors font-medium">

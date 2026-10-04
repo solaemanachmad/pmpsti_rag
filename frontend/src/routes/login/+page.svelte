@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ThemeToggle from '$lib/components/ThemeToggle.svelte';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/api/client';
   import { authStore } from '$lib/stores/auth';
@@ -26,6 +27,10 @@
 </script>
 
 <svelte:head><title>Masuk — PMPSTI</title></svelte:head>
+
+<div class="fixed top-4 right-4 z-50">
+  <ThemeToggle />
+</div>
 
 <div class="min-h-screen flex flex-col bg-background">
   <!-- Top bar UGM -->
