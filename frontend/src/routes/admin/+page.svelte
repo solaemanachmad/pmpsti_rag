@@ -7,9 +7,17 @@
   import {
     BarChart3, Users, FileText, List,
     Loader2, Trash2, ShieldCheck, ShieldOff,
-    RefreshCw, AlertCircle, ChevronLeft, ChevronRight,
-    Search, Shield, LogOut
+    RefreshCw, ChevronLeft, ChevronRight,
+    Search, LogOut, Moon, Sun
   } from 'lucide-svelte';
+
+  let dark = false;
+  onMount(() => { dark = document.documentElement.classList.contains('dark'); });
+  function toggleDark() {
+    dark = !dark;
+    document.documentElement.classList.toggle('dark', dark);
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
 
   type Tab = 'stats' | 'users' | 'documents' | 'logs';
   let activeTab: Tab = 'stats';
@@ -145,11 +153,18 @@
     </div>
     <div class="flex items-center gap-2">
       <span class="text-xs text-white/60 hidden sm:block">{$currentUser?.email ?? ''}</span>
-      <a href="/chat" class="flex items-center gap-1.5 text-xs text-white/70 hover:text-white
-                             bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors">
-        <LogOut size={13} />
-        Kembali
-      </a>
+      <div class="flex items-center gap-2">
+        <button on:click={toggleDark}
+          title="{dark ? 'Light mode' : 'Dark mode'}"
+          class="p-1.5 rounded-lg text-white/70 hover:text-white bg-white/10 hover:bg-white/20 transition-colors">
+          {#if dark}<Sun size={14} />{:else}<Moon size={14} />{/if}
+        </button>
+        <a href="/chat" class="flex items-center gap-1.5 text-xs text-white/70 hover:text-white
+                               bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors">
+          <LogOut size={13} />
+          Kembali
+        </a>
+      </div>
     </div>
   </header>
 

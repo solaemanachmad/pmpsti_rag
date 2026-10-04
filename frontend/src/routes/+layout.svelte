@@ -13,7 +13,9 @@
   const publicRoutes = ['/', '/login', '/register'];
 
   onMount(async () => {
+    // Sync dark state from DOM (set by inline script in app.html)
     dark = document.documentElement.classList.contains('dark');
+
     if ($isLoggedIn) {
       try {
         const user = await auth.me();
@@ -45,9 +47,8 @@
   $: isPublic = publicRoutes.includes($page.url.pathname);
   $: isAdmin = $currentUser?.role === 'admin';
 
-  // Class helper — tidak pakai @apply, langsung string
-  const navBase = 'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer w-full';
-  const navActive = 'bg-accent text-accent-foreground font-medium';
+  const navBase = 'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/20 hover:text-foreground transition-colors cursor-pointer w-full';
+  const navActive = 'bg-accent/20 text-foreground font-medium';
 
   function navClass(path: string) {
     const active = $page.url.pathname.startsWith(path);
@@ -56,6 +57,16 @@
 </script>
 
 {#if isPublic}
+  <!-- Dark mode toggle untuk halaman publik (pojok kanan atas) -->
+  <div class="fixed top-4 right-4 z-50">
+    <button on:click={toggleDark}
+      title="{dark ? 'Light mode' : 'Dark mode'}"
+      class="p-2 rounded-full bg-background/80 backdrop-blur border border-border
+             text-muted-foreground hover:text-foreground hover:bg-muted
+             transition-all shadow-sm">
+      {#if dark}<Sun size={16} />{:else}<Moon size={16} />{/if}
+    </button>
+  </div>
   <slot />
 {:else if $isLoggedIn}
   <div class="flex h-screen overflow-hidden bg-background">
@@ -79,7 +90,7 @@
         </a>
         {#if isAdmin}
           <a href="/admin" class={navClass('/admin')}>
-            <BarChart3 size={16} /><span>Dashboard</span>
+            <BarChart3 size={16} /><span>Admin</span>
           </a>
         {/if}
       </nav>
@@ -90,12 +101,14 @@
           <span class="truncate">{$currentUser?.display_name || $currentUser?.email || 'Profil'}</span>
         </a>
         <button on:click={toggleDark}
-          class="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer w-full text-left">
+          class="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground
+                 hover:bg-muted hover:text-foreground transition-colors cursor-pointer w-full text-left">
           {#if dark}<Sun size={16} />{:else}<Moon size={16} />{/if}
           <span>{dark ? 'Light mode' : 'Dark mode'}</span>
         </button>
         <button on:click={logout}
-          class="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-destructive hover:bg-destructive/10 transition-colors cursor-pointer w-full text-left">
+          class="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-destructive
+                 hover:bg-destructive/10 transition-colors cursor-pointer w-full text-left">
           <LogOut size={16} /><span>Keluar</span>
         </button>
       </div>
@@ -105,13 +118,17 @@
     <div class="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 h-14 border-b bg-background">
       <div class="flex items-center gap-2">
         <img src="/ugm-logo-white.png" alt="Logo UGM" class="w-7 h-7 shrink-0" />
-        <div class="leading-tight">
-          <div class="font-semibold text-sm">PMPSTI</div>
-        </div>
+        <div class="font-semibold text-sm">PMPSTI</div>
       </div>
-      <button on:click={() => menuOpen = !menuOpen} class="p-1.5 rounded-md hover:bg-muted">
-        {#if menuOpen}<X size={18} />{:else}<Menu size={18} />{/if}
-      </button>
+      <div class="flex items-center gap-1">
+        <button on:click={toggleDark}
+          class="p-2 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+          {#if dark}<Sun size={16} />{:else}<Moon size={16} />{/if}
+        </button>
+        <button on:click={() => menuOpen = !menuOpen} class="p-1.5 rounded-md hover:bg-muted">
+          {#if menuOpen}<X size={18} />{:else}<Menu size={18} />{/if}
+        </button>
+      </div>
     </div>
 
     {#if menuOpen}
@@ -128,11 +145,15 @@
         </a>
         {#if isAdmin}
           <a href="/admin" class={navClass('/admin')} on:click={() => menuOpen = false}>
-            <BarChart3 size={16} /><span>Dashboard</span>
+            <BarChart3 size={16} /><span>Admin</span>
           </a>
         {/if}
+        <a href="/profile" class={navClass('/profile')} on:click={() => menuOpen = false}>
+          <User size={16} /><span>Profil</span>
+        </a>
         <button on:click={logout}
-          class="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-destructive hover:bg-destructive/10 transition-colors cursor-pointer w-full text-left">
+          class="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-destructive
+                 hover:bg-destructive/10 transition-colors cursor-pointer w-full text-left">
           <LogOut size={16} /><span>Keluar</span>
         </button>
       </div>
