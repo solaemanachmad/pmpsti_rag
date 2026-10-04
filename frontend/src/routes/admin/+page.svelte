@@ -435,7 +435,7 @@
                   </td>
                   <td class="px-4 py-3 hidden sm:table-cell">
                     <select value={u.role}
-                            on:change={e => setRole(u, (e.target as HTMLSelectElement).value)}
+                            on:change={e => setRole(u, /** @type {HTMLSelectElement} */ (e.target).value)}
                             class="text-xs border rounded px-2 py-1 bg-background
                                    {u.role === 'admin' ? 'text-[#0055A5] font-semibold' : ''}">
                       <option value="user">user</option>
