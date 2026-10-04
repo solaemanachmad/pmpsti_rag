@@ -13,7 +13,7 @@ use crate::rag::RagEngine;
 
 // ── Rate limiter state: IP -> (fail_count, window_start) ──
 #[derive(Clone)]
-struct LoginAttempt {
+pub struct LoginAttempt {
     count:      u32,
     window_start: Instant,
 }
