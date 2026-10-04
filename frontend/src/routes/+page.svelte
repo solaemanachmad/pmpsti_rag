@@ -247,7 +247,7 @@
           <span class="inline-flex items-center gap-1.5 text-xs font-semibold tracking-widest
                        uppercase text-[#0055A5] bg-[#EEF4FF] px-3 py-1 rounded-full mb-3">
             <Sparkles size={11} />
-            Powered by AI · Dokumen Resmi
+            Dokumen Resmi
           </span>
         </div>
         <h1 class="text-3xl sm:text-4xl font-extrabold text-foreground mb-3 leading-tight tracking-tight">
