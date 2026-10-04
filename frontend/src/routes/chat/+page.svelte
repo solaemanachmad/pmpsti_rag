@@ -173,7 +173,7 @@
 
 </script>
 
-<svelte:head><title>Tanya PMPSTI</title></svelte:head>
+<svelte:head><title>DTETI Menjawab</title></svelte:head>
 
 <div class="flex h-full overflow-hidden">
   <!-- Session sidebar -->

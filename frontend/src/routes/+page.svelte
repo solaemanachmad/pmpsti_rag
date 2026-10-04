@@ -138,18 +138,17 @@
   <!-- ── Header ── -->
   <header class="border-b bg-[#002147] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-30">
     <div class="flex items-center gap-3">
-      <!-- Logo: light=blue svg, dark=white svg via CSS -->
       <picture>
         <source srcset="/ugm-logo-white.png" media="(prefers-color-scheme: dark)" />
-        <img src="/ugm-logo-white.png" alt="Logo UGM" class="w-9 h-9 shrink-0" />
+        <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-11 w-auto shrink-0" />
       </picture>
       <div class="leading-tight">
-        <div class="font-semibold text-sm tracking-wide">PMPSTI</div>
-        <div class="text-[11px] text-white/60">Universitas Gadjah Mada</div>
+        <div class="font-bold text-base tracking-wide">DTETI</div>
+        <div class="text-[11px] text-white/60">Teknik Elektro & Teknologi Informasi UGM</div>
       </div>
     </div>
     <nav class="flex items-center gap-1.5">
-      <ThemeToggle />
+      <ThemeToggle onDark={true} />
       <a href="/login"
         class="flex items-center gap-1.5 text-sm text-white/80 hover:text-white hover:bg-white/10
                px-3 py-1.5 rounded-lg transition-colors font-medium">

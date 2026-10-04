@@ -57,16 +57,6 @@
 </script>
 
 {#if isPublic}
-  <!-- Dark mode toggle untuk halaman publik (pojok kanan atas) -->
-  <div class="fixed top-4 right-4 z-50">
-    <button on:click={toggleDark}
-      title="{dark ? 'Light mode' : 'Dark mode'}"
-      class="p-2 rounded-full bg-background/80 backdrop-blur border border-border
-             text-muted-foreground hover:text-foreground hover:bg-muted
-             transition-all shadow-sm">
-      {#if dark}<Sun size={16} />{:else}<Moon size={16} />{/if}
-    </button>
-  </div>
   <slot />
 {:else if $isLoggedIn}
   <div class="flex h-screen overflow-hidden bg-background">
@@ -74,10 +64,10 @@
     <!-- Sidebar desktop -->
     <aside class="hidden md:flex w-56 flex-col border-r bg-card">
       <div class="flex items-center gap-2.5 px-4 py-4 border-b bg-[#002147]">
-        <img src="/ugm-logo-white.png" alt="Logo UGM" class="w-8 h-8 shrink-0" />
+        <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-10 w-auto shrink-0" />
         <div class="leading-tight">
-          <div class="font-semibold text-sm text-white">PMPSTI</div>
-          <div class="text-[10px] text-white/50 leading-none">Universitas Gadjah Mada</div>
+          <div class="font-bold text-sm text-white">DTETI</div>
+          <div class="text-[10px] text-white/50 leading-none">Teknik Elektro & TI UGM</div>
         </div>
       </div>
 
@@ -117,8 +107,8 @@
     <!-- Topbar mobile -->
     <div class="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 h-14 border-b bg-background">
       <div class="flex items-center gap-2">
-        <img src="/ugm-logo-white.png" alt="Logo UGM" class="w-7 h-7 shrink-0" />
-        <div class="font-semibold text-sm">PMPSTI</div>
+        <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-9 w-auto shrink-0" />
+        <div class="font-bold text-sm">DTETI</div>
       </div>
       <div class="flex items-center gap-1">
         <button on:click={toggleDark}

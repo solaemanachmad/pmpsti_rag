@@ -189,11 +189,11 @@
     <div class="flex items-center gap-3">
       <picture>
         <source srcset="/ugm-logo-white.png" media="(prefers-color-scheme: dark)" />
-        <img src="/ugm-logo-white.png" alt="Logo UGM" class="w-8 h-8" />
+        <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-10 w-auto" />
       </picture>
       <div>
-        <div class="font-semibold text-sm">Panel Admin</div>
-        <div class="text-[11px] text-white/50">PMPSTI Universitas Gadjah Mada</div>
+        <div class="font-bold text-sm">Panel Admin</div>
+        <div class="text-[11px] text-white/50">DTETI — Teknik Elektro & Teknologi Informasi UGM</div>
       </div>
     </div>
     <div class="flex items-center gap-2">
