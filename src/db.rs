@@ -621,6 +621,38 @@ impl Database {
         Ok(row_to_user(&row))
     }
 
+    /// Buat user dengan role tertentu (digunakan admin)
+    pub async fn create_user_with_role(
+        &self,
+        email:         &str,
+        password_hash: &str,
+        display_name:  &str,
+        role:          &str,
+    ) -> Result<User, String> {
+        let safe_role = if role == "admin" { "admin" } else { "user" };
+        let row = sqlx::query(
+            "INSERT INTO users (email, password_hash, display_name, role, is_active, email_verified)
+             VALUES ($1, $2, $3, $4, TRUE, TRUE)
+             RETURNING id, email, password_hash, display_name, role, is_active,
+                       created_at::text, updated_at::text",
+        )
+        .bind(email)
+        .bind(password_hash)
+        .bind(if display_name.is_empty() { email } else { display_name })
+        .bind(safe_role)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("unique") || e.to_string().contains("duplicate") {
+                "Email sudah terdaftar".to_string()
+            } else {
+                format!("Database error: {}", e)
+            }
+        })?;
+
+        Ok(row_to_user(&row))
+    }
+
     // ════════════════════════════════════════════════════════════
     //  EMAIL VERIFICATION
     // ════════════════════════════════════════════════════════════

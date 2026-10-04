@@ -170,6 +170,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/keys/{id}",  web::delete().to(handlers::revoke_api_key_handler))
                     .route("/admin/stats",              web::get().to(handlers::query_stats))
                     .route("/admin/users",              web::get().to(handlers::admin_list_users))
+                    .route("/admin/users",              web::post().to(handlers::admin_create_user))
                     .route("/admin/users/{id}/role",    web::patch().to(handlers::admin_set_user_role))
                     .route("/admin/users/{id}/active",  web::patch().to(handlers::admin_toggle_user))
                     .route("/admin/sessions",           web::get().to(handlers::admin_list_sessions))

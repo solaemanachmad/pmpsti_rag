@@ -102,6 +102,13 @@ export const admin = {
       body: JSON.stringify({ is_active })
     }),
 
+  // Create user (admin)
+  createUser: (email: string, display_name?: string, role = 'user') =>
+    request<AdminUser>('/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ email, display_name, role })
+    }),
+
   // Sessions
   listSessions: () =>
     request<AdminSession[]>('/admin/sessions'),

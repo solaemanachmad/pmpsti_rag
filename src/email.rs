@@ -20,7 +20,7 @@ pub async fn send_verification_email(
 <html>
 <head><meta charset="utf-8"></head>
 <body style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 32px;">
-  <h2 style="color: #1a1a2e;">Verifikasi Email PMPSTI RAG</h2>
+  <h2 style="color: #002147;">Verifikasi Email PMPSTI</h2>
   <p>Terima kasih telah mendaftar. Klik tombol di bawah untuk mengaktifkan akun kamu:</p>
   <a href="{verify_url}"
      style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;
@@ -32,16 +32,16 @@ pub async fn send_verification_email(
     Jika kamu tidak mendaftar, abaikan email ini.
   </p>
   <hr style="border:none;border-top:1px solid #eee;margin-top:32px;">
-  <p style="color:#999;font-size:12px;">PMPSTI — {base_url}</p>
+  <p style="color:#999;font-size:12px;">PMPSTI UGM — {base_url}</p>
 </body>
 </html>
     "#, verify_url = verify_url, base_url = base_url);
 
     let client = Client::new();
     let payload = ResendEmail {
-        from:    "PMPSTI RAG <noreply@mail.ugm.ac.id>",
+        from:    "PMPSTI <onboarding@resend.dev>",
         to:      vec![to_email],
-        subject: "Verifikasi Email — PMPSTI RAG",
+        subject: "Verifikasi Email — PMPSTI",
         html,
     };
 

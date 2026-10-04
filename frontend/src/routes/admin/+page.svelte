@@ -8,7 +8,7 @@
     BarChart3, Users, FileText, List,
     Loader2, Trash2, ShieldCheck, ShieldOff,
     RefreshCw, ChevronLeft, ChevronRight,
-    Search, LogOut, Moon, Sun
+    Search, LogOut, Moon, Sun, UserPlus
   } from 'lucide-svelte';
 
   let dark = false;
@@ -17,6 +17,43 @@
     dark = !dark;
     document.documentElement.classList.toggle('dark', dark);
     localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+
+  // ── Add User ──
+  let showAddUser = false;
+  let addMode: 'single' | 'batch' = 'single';
+  let newEmail = ''; let newName = ''; let newRole = 'user';
+  let batchCsv = '';
+  let addLoading = false; let addError = ''; let addSuccess = '';
+
+  async function addSingleUser() {
+    if (!newEmail.trim()) { addError = 'Email wajib diisi'; return; }
+    addLoading = true; addError = ''; addSuccess = '';
+    try {
+      await admin.createUser(newEmail.trim(), newName.trim() || undefined, newRole);
+      addSuccess = `Pengguna ${newEmail} berhasil ditambahkan`;
+      newEmail = ''; newName = ''; newRole = 'user';
+      users = []; loadUsers();
+    } catch (e: unknown) { addError = e instanceof Error ? e.message : String(e); }
+    finally { addLoading = false; }
+  }
+
+  async function addBatchUsers() {
+    const lines = batchCsv.trim().split('\n').filter(l => l.trim() && !l.startsWith('email'));
+    if (!lines.length) { addError = 'CSV kosong'; return; }
+    addLoading = true; addError = ''; addSuccess = '';
+    let ok = 0; let fail = 0;
+    for (const line of lines) {
+      const [email, name, role] = line.split(',').map(s => s.trim());
+      if (!email) { fail++; continue; }
+      try {
+        await admin.createUser(email, name || undefined, role || 'user');
+        ok++;
+      } catch { fail++; }
+    }
+    addSuccess = `Berhasil: ${ok}, Gagal: ${fail}`;
+    addLoading = false;
+    if (ok > 0) { users = []; loadUsers(); }
   }
 
   type Tab = 'stats' | 'users' | 'documents' | 'logs';
@@ -263,13 +300,99 @@
 
     <!-- ══ USERS ══ -->
     {:else if activeTab === 'users'}
-      <div class="flex items-center gap-3 mb-4">
-        <div class="relative flex-1 max-w-xs">
+      <!-- Add User Modal -->
+      {#if showAddUser}
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+             on:click|self={() => showAddUser = false} role="presentation">
+          <div class="bg-card border rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
+            <h3 class="text-base font-semibold mb-4">Tambah Pengguna</h3>
+
+            <!-- Toggle satuan/batch -->
+            <div class="flex gap-1 mb-4 p-1 bg-muted rounded-lg">
+              <button on:click={() => addMode = 'single'}
+                class="flex-1 text-xs py-1.5 rounded-md font-medium transition-colors
+                       {addMode === 'single' ? 'bg-background shadow text-foreground' : 'text-muted-foreground'}">
+                Satuan
+              </button>
+              <button on:click={() => addMode = 'batch'}
+                class="flex-1 text-xs py-1.5 rounded-md font-medium transition-colors
+                       {addMode === 'batch' ? 'bg-background shadow text-foreground' : 'text-muted-foreground'}">
+                Batch (CSV)
+              </button>
+            </div>
+
+            {#if addMode === 'single'}
+              <div class="space-y-3">
+                <div>
+                  <label class="text-xs text-muted-foreground mb-1 block">Email *</label>
+                  <input bind:value={newEmail} type="email" placeholder="mahasiswa@mail.ugm.ac.id"
+                    class="w-full px-3 py-2 text-sm border rounded-lg bg-background outline-none
+                           focus:ring-2 focus:ring-[#0055A5]/40" />
+                </div>
+                <div>
+                  <label class="text-xs text-muted-foreground mb-1 block">Nama</label>
+                  <input bind:value={newName} placeholder="Nama lengkap (opsional)"
+                    class="w-full px-3 py-2 text-sm border rounded-lg bg-background outline-none
+                           focus:ring-2 focus:ring-[#0055A5]/40" />
+                </div>
+                <div>
+                  <label class="text-xs text-muted-foreground mb-1 block">Role</label>
+                  <select bind:value={newRole}
+                    class="w-full px-3 py-2 text-sm border rounded-lg bg-background outline-none">
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </div>
+                {#if addError}<p class="text-xs text-destructive">{addError}</p>{/if}
+                {#if addSuccess}<p class="text-xs text-emerald-600">{addSuccess}</p>{/if}
+              </div>
+            {:else}
+              <div class="space-y-3">
+                <p class="text-xs text-muted-foreground">
+                  Format CSV: <code class="bg-muted px-1 rounded">email,nama,role</code><br>
+                  Contoh:<br>
+                  <code class="bg-muted px-1 rounded text-[11px]">
+                    budi@mail.ugm.ac.id,Budi Santoso,user
+                  </code>
+                </p>
+                <textarea bind:value={batchCsv} rows={6}
+                  placeholder="email,nama,role&#10;budi@mail.ugm.ac.id,Budi,user&#10;siti@mail.ugm.ac.id,Siti,user"
+                  class="w-full px-3 py-2 text-xs font-mono border rounded-lg bg-background outline-none
+                         focus:ring-2 focus:ring-[#0055A5]/40 resize-none" />
+                {#if addError}<p class="text-xs text-destructive">{addError}</p>{/if}
+                {#if addSuccess}<p class="text-xs text-emerald-600">{addSuccess}</p>{/if}
+              </div>
+            {/if}
+
+            <div class="flex gap-2 mt-4 justify-end">
+              <button on:click={() => showAddUser = false}
+                class="px-4 py-2 text-sm border rounded-lg hover:bg-muted transition-colors">
+                Batal
+              </button>
+              <button on:click={addMode === 'single' ? addSingleUser : addBatchUsers}
+                      disabled={addLoading}
+                class="px-4 py-2 text-sm bg-[#0055A5] text-white rounded-lg
+                       hover:bg-[#0044a0] disabled:opacity-50 transition-colors flex items-center gap-2">
+                {#if addLoading}<Loader2 size={13} class="animate-spin" />{/if}
+                {addMode === 'single' ? 'Tambah' : 'Import'}
+              </button>
+            </div>
+          </div>
+        </div>
+      {/if}
+
+      <div class="flex items-center gap-3 mb-4 flex-wrap">
+        <div class="relative flex-1 min-w-[180px]">
           <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input bind:value={userSearch} placeholder="Cari email / nama..."
                  class="w-full pl-8 pr-3 py-2 text-sm border rounded-lg bg-background outline-none
                         focus:ring-2 focus:ring-[#0055A5]/40 focus:border-[#0055A5]/40" />
         </div>
+        <button on:click={() => showAddUser = true}
+                class="flex items-center gap-1.5 text-sm text-white bg-[#0055A5]
+                       hover:bg-[#0044a0] rounded-lg px-3 py-2 transition-colors">
+          <UserPlus size={13} /> Tambah
+        </button>
         <button on:click={() => { users = []; loadUsers(); }}
                 class="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground
                        border rounded-lg px-3 py-2 transition-colors">

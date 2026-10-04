@@ -758,6 +758,59 @@ pub async fn admin_list_users(req: HttpRequest, state: web::Data<AppState>) -> H
     }
 }
 
+pub async fn admin_create_user(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    body:  web::Json<serde_json::Value>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    let email = match body.get("email").and_then(|v| v.as_str()) {
+        Some(e) if !e.is_empty() => e.to_string(),
+        _ => return HttpResponse::BadRequest().json(ApiError::new(400, "Email wajib diisi")),
+    };
+    let display_name = body.get("display_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let role = body.get("role")
+        .and_then(|v| v.as_str())
+        .unwrap_or("user")
+        .to_string();
+
+    // Generate random password — user can reset later
+    use rand::Rng;
+    let tmp_pw: String = rand::rng()
+        .sample_iter(rand::distr::Alphanumeric)
+        .take(16)
+        .map(char::from)
+        .collect();
+    let hash = match tokio::task::spawn_blocking({
+        let pw = tmp_pw.clone();
+        move || hash_password(&pw)
+    }).await {
+        Ok(Ok(h)) => h,
+        _ => return HttpResponse::InternalServerError()
+                .json(ApiError::new(500, "Gagal hash password")),
+    };
+
+    let user = match state.db.create_user_with_role(&email, &hash, &display_name, &role).await {
+        Ok(u)  => u,
+        Err(e) => return HttpResponse::Conflict().json(ApiError::new(409, e)),
+    };
+
+    HttpResponse::Created().json(ApiSuccess::new(serde_json::json!({
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "role": role,
+        "is_active": true,
+        "created_at": user.created_at,
+    })))
+}
+
 pub async fn admin_set_user_role(
     req:   HttpRequest,
     state: web::Data<AppState>,
