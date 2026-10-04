@@ -193,6 +193,7 @@ export interface SourceRef {
   snippet: string;
   source_url: string;
   category: string;
+  subcategory?: string;
   score: number;
 }
 export interface SessionListItem {
@@ -214,6 +215,7 @@ export interface ChatSource {
   snippet: string;
   source_url: string;
   category: string;
+  subcategory?: string;
   score: number;
 }
 export interface ChatMessage {

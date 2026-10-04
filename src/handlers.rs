@@ -463,10 +463,11 @@ pub async fn ask(
         content:    answer.clone(),
         created_at: now.clone(),
         sources:    relevant.iter().map(|c| ChatSource {
-            title:      c.title.clone(),
+            title:      clean_source_title(&c.title, &c.subcategory),
             snippet:    c.snippet.clone(),
             source_url: c.source_url.clone(),
             category:   c.category.clone(),
+            subcategory: c.subcategory.clone(),
             score:      c.score,
         }).collect(),
     });
@@ -489,10 +490,11 @@ pub async fn ask(
 
     // Build sources
     let sources: Vec<SourceRef> = relevant.iter().map(|c| SourceRef {
-        title:      c.title.clone(),
+        title:      clean_source_title(&c.title, &c.subcategory),
         snippet:    c.snippet.clone(),
         source_url: c.source_url.clone(),
         category:   c.category.clone(),
+        subcategory: c.subcategory.clone(),
         score:      c.score,
     }).collect();
 
@@ -568,10 +570,11 @@ pub async fn ask_public(
     let new_count = state.db.guest_increment(&guest_token).await;
 
     let sources: Vec<SourceRef> = relevant.iter().map(|c| SourceRef {
-        title:      c.title.clone(),
+        title:      clean_source_title(&c.title, &c.subcategory),
         snippet:    c.snippet.clone(),
         source_url: c.source_url.clone(),
         category:   c.category.clone(),
+        subcategory: c.subcategory.clone(),
         score:      c.score,
     }).collect();
 
@@ -851,3 +854,42 @@ pub async fn admin_delete_document(
         Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
     }
 }
+
+/// Bersihkan judul sumber referensi untuk tampilan di frontend.
+/// Prioritaskan subcategory (misal "1.2 Latar Belakang") daripada path title
+/// (misal "chapter1/introduction"). Jika subcategory kosong, ambil bagian terakhir
+/// dari title (setelah `/`), atau title itu sendiri.
+fn clean_source_title(title: &str, subcategory: &str) -> String {
+    // Subcategory biasanya format "1.2Latar Belakang" atau "1.2 Latar Belakang"
+    // Tambah spasi antara angka dan huruf jika belum ada
+    if !subcategory.trim().is_empty() {
+        let sub = subcategory.trim();
+        // Insert spasi setelah digit+titik pattern: "1.2Latar" -> "1.2 Latar"
+        let re_result = {
+            let mut out = String::with_capacity(sub.len() + 4);
+            let chars: Vec<char> = sub.chars().collect();
+            for (i, &c) in chars.iter().enumerate() {
+                out.push(c);
+                if i + 1 < chars.len() {
+                    let next = chars[i + 1];
+                    // After digit or dot, if next is uppercase/letter but no space
+                    if (c.is_ascii_digit() || c == '.') && next.is_alphabetic() && next != ' ' {
+                        // Check we haven't already got a space
+                        out.push(' ');
+                    }
+                }
+            }
+            out
+        };
+        return re_result;
+    }
+    // Fallback: ambil bagian terakhir setelah '/'
+    if let Some(last) = title.rsplit('/').next() {
+        let last = last.trim();
+        if !last.is_empty() {
+            return last.to_string();
+        }
+    }
+    title.to_string()
+}
+

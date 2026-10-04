@@ -63,7 +63,7 @@
     <!-- Sidebar desktop -->
     <aside class="hidden md:flex w-56 flex-col border-r bg-card">
       <div class="flex items-center gap-2.5 px-4 py-4 border-b bg-[#002147]">
-        <img src="/ugm-logo.svg" alt="Logo UGM" class="w-8 h-8 shrink-0" />
+        <img src="/ugm-logo-white.svg" alt="Logo UGM" class="w-8 h-8 shrink-0" />
         <div class="leading-tight">
           <div class="font-semibold text-sm text-white">PMPSTI RAG</div>
           <div class="text-[10px] text-white/50 leading-none">Universitas Gadjah Mada</div>
@@ -104,7 +104,7 @@
     <!-- Topbar mobile -->
     <div class="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 h-14 border-b bg-background">
       <div class="flex items-center gap-2">
-        <img src="/ugm-logo.svg" alt="Logo UGM" class="w-7 h-7 shrink-0" />
+        <img src="/ugm-logo-white.svg" alt="Logo UGM" class="w-7 h-7 shrink-0" />
         <div class="leading-tight">
           <div class="font-semibold text-sm">PMPSTI RAG</div>
         </div>

@@ -50,6 +50,7 @@ pub struct ChatSource {
     pub snippet:    String,
     pub source_url: String,
     pub category:   String,
+    pub subcategory: String,
     pub score:      f64,
 }
 

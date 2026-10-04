@@ -35,7 +35,10 @@
   <div class="flex-1 flex flex-col items-center justify-center px-4 pb-12">
     <!-- Branding -->
     <div class="flex flex-col items-center gap-3 mb-8">
-      <img src="/ugm-logo.svg" alt="Logo UGM" class="w-16 h-16" />
+      <picture>
+          <source srcset="/ugm-logo-white.svg" media="(prefers-color-scheme: dark)" />
+          <img src="/ugm-logo-blue.svg" alt="Logo UGM" class="w-16 h-16" />
+        </picture>
       <div class="text-center">
         <div class="font-bold text-lg text-foreground">PMPSTI RAG</div>
         <div class="text-xs text-muted-foreground">Asisten Akademik — Universitas Gadjah Mada</div>
