@@ -901,7 +901,7 @@ pub async fn admin_query_logs(req: HttpRequest, state: web::Data<AppState>) -> H
         return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
     }
     let query = web::Query::<std::collections::HashMap<String, String>>::from_query(req.query_string())
-        .unwrap_or_default();
+        .unwrap_or_else(|_| web::Query(std::collections::HashMap::new()));
     let limit:  i64 = query.get("limit").and_then(|v| v.parse().ok()).unwrap_or(50).min(200);
     let offset: i64 = query.get("offset").and_then(|v| v.parse().ok()).unwrap_or(0).max(0);
 

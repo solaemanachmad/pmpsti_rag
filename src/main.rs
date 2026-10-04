@@ -80,6 +80,7 @@ async fn main() -> std::io::Result<()> {
 
     let db = Arc::new(Database::new(pool));
     db.setup().await.expect("Gagal setup database schema");
+    seed_admin_user(&db).await;
 
     let search = SearchEngine::new(db.clone()).expect("Gagal load embedding model");
 
