@@ -130,6 +130,13 @@ export const admin = {
       { method: 'DELETE' }
     ),
 
+  // Document ingest
+  ingestUrl: (payload: { url: string; title?: string; category?: string; subcategory?: string }) =>
+    request<{ document_id: string; chunks: number; title: string }>(
+      '/admin/documents/ingest-url',
+      { method: 'POST', body: JSON.stringify(payload) }
+    ),
+
   // Query logs
   queryLogs: (limit = 50, offset = 0) =>
     request<{ logs: AdminQueryLog[]; total: number }>(`/admin/logs?limit=${limit}&offset=${offset}`)
@@ -298,6 +305,12 @@ export interface AdminDocument {
   source_url: string;
   chunk_count: number;
 }
+export interface IngestResponse {
+  document_id: string;
+  chunks: number;
+  title: string;
+}
+
 export interface AdminQueryLog {
   id: number;
   query_text: string;

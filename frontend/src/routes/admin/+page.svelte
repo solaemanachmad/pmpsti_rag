@@ -8,7 +8,7 @@
     BarChart3, Users, FileText, List,
     Loader2, Trash2, ShieldCheck, ShieldOff,
     RefreshCw, ChevronLeft, ChevronRight,
-    Search, UserPlus
+    Search, UserPlus, Globe, Plus, X, CheckCircle2, AlertCircle
   } from 'lucide-svelte';
 
   // ── Add User ──
@@ -66,6 +66,34 @@
   let documents: AdminDocument[] = [];
   let docsLoading = false;
   let docsError = '';
+
+  // ── Ingest URL ──
+  let showIngest = false;
+  let ingestUrl = '';
+  let ingestTitle = '';
+  let ingestCategory = '';
+  let ingestSubcategory = '';
+  let ingestLoading = false;
+  let ingestError = '';
+  let ingestSuccess = '';
+
+  async function doIngestUrl() {
+    if (!ingestUrl.trim()) { ingestError = 'URL wajib diisi'; return; }
+    ingestLoading = true; ingestError = ''; ingestSuccess = '';
+    try {
+      const res = await admin.ingestUrl({
+        url: ingestUrl.trim(),
+        title: ingestTitle.trim() || undefined,
+        category: ingestCategory.trim() || undefined,
+        subcategory: ingestSubcategory.trim() || undefined,
+      });
+      ingestSuccess = `Berhasil: "${res.title}" — ${res.chunks} chunk diindeks`;
+      ingestUrl = ''; ingestTitle = ''; ingestCategory = ''; ingestSubcategory = '';
+      showIngest = false;
+      documents = []; loadDocuments();
+    } catch (e: unknown) { ingestError = e instanceof Error ? e.message : String(e); }
+    finally { ingestLoading = false; }
+  }
 
   // ── Logs ──
   interface QueryLog {
@@ -453,12 +481,74 @@
     {:else if activeTab === 'documents'}
       <div class="flex justify-between items-center mb-4">
         <p class="text-sm text-muted-foreground">{documents.length} dokumen terindeks</p>
-        <button on:click={() => { documents = []; loadDocuments(); }}
-                class="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground
-                       border rounded-lg px-3 py-2 transition-colors">
-          <RefreshCw size={13} /> Refresh
-        </button>
+        <div class="flex items-center gap-2">
+          <button on:click={() => { documents = []; loadDocuments(); }}
+                  class="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground
+                         border rounded-lg px-3 py-2 transition-colors">
+            <RefreshCw size={13} /> Refresh
+          </button>
+          <button on:click={() => { showIngest = !showIngest; ingestError = ''; ingestSuccess = ''; }}
+                  class="flex items-center gap-1.5 text-sm text-white bg-[#002147]
+                         hover:bg-[#003580] px-3 py-2 rounded-lg transition-colors">
+            <Globe size={13} /> Tambah URL
+          </button>
+        </div>
       </div>
+
+      {#if ingestSuccess}
+        <div class="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700
+                    dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800
+                    rounded-lg px-4 py-2.5 text-sm mb-4">
+          <CheckCircle2 size={15} />{ingestSuccess}
+        </div>
+      {/if}
+
+      {#if showIngest}
+        <div class="bg-card border rounded-xl p-5 mb-4">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-sm">Tambah Sumber dari URL</h3>
+            <button on:click={() => showIngest = false} class="text-muted-foreground hover:text-foreground">
+              <X size={15} />
+            </button>
+          </div>
+          <div class="grid gap-3">
+            <div>
+              <label class="block text-xs font-medium text-muted-foreground mb-1">URL <span class="text-rose-500">*</span></label>
+              <input bind:value={ingestUrl} placeholder="https://example.com/halaman"
+                     class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
+            </div>
+            <div class="grid sm:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-muted-foreground mb-1">Judul (opsional)</label>
+                <input bind:value={ingestTitle} placeholder="Judul dokumen"
+                       class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-muted-foreground mb-1">Kategori</label>
+                <input bind:value={ingestCategory} placeholder="misal: Akademik"
+                       class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-muted-foreground mb-1">Sub-kategori</label>
+                <input bind:value={ingestSubcategory} placeholder="misal: Kurikulum"
+                       class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
+              </div>
+            </div>
+            {#if ingestError}
+              <div class="flex items-center gap-2 text-rose-600 text-sm">
+                <AlertCircle size={14} />{ingestError}
+              </div>
+            {/if}
+            <div class="flex justify-end">
+              <button on:click={doIngestUrl} disabled={ingestLoading}
+                      class="flex items-center gap-2 text-sm text-white bg-[#0055A5] hover:bg-[#003580]
+                             disabled:opacity-50 px-4 py-2 rounded-lg transition-colors">
+                {#if ingestLoading}<Loader2 size={14} class="animate-spin" />Memproses...{:else}<Plus size={14} />Proses & Indeks{/if}
+              </button>
+            </div>
+          </div>
+        </div>
+      {/if}
 
       {#if docsLoading}
         <div class="flex items-center justify-center py-12 text-muted-foreground gap-2">

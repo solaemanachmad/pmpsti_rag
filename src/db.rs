@@ -1209,6 +1209,20 @@ pub struct AdminSession {
 }
 
 #[derive(Debug, serde::Serialize)]
+// ── Struct untuk ingest dokumen baru ──────────────────────────
+#[derive(Debug, Clone)]
+pub struct DocumentChunk {
+    pub document_id:   String,
+    pub title:         String,
+    pub content:       String,
+    pub source_url:    String,
+    pub category:      String,
+    pub subcategory:   String,
+    pub document_type: String,
+    pub chunk_index:   i32,
+    pub embedding:     Vec<f32>,
+}
+
 pub struct AdminDocument {
     pub document_id:   String,
     pub title:         String,
@@ -1322,6 +1336,40 @@ impl Database {
     // ════════════════════════════════════════════════════════════
     //  ADMIN — DOCUMENTS
     // ════════════════════════════════════════════════════════════
+
+    // ════════════════════════════════════════════════════════════
+    //  DOCUMENT INGEST — insert chunks dengan embedding
+    // ════════════════════════════════════════════════════════════
+
+    pub async fn insert_document_chunks(&self, chunks: &[DocumentChunk]) -> Result<usize, String> {
+        let mut inserted = 0usize;
+        for chunk in chunks {
+            let vec = pgvector::Vector::from(chunk.embedding.clone());
+            sqlx::query(
+                "INSERT INTO documents
+                    (document_id, title, content, source_url, category, subcategory,
+                     document_type, chunk_index, embedding, created_at, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+                 ON CONFLICT (document_id, chunk_index) DO UPDATE
+                 SET content=EXCLUDED.content, embedding=EXCLUDED.embedding,
+                     title=EXCLUDED.title, updated_at=NOW()"
+            )
+            .bind(&chunk.document_id)
+            .bind(&chunk.title)
+            .bind(&chunk.content)
+            .bind(&chunk.source_url)
+            .bind(&chunk.category)
+            .bind(&chunk.subcategory)
+            .bind(&chunk.document_type)
+            .bind(chunk.chunk_index)
+            .bind(vec)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+            inserted += 1;
+        }
+        Ok(inserted)
+    }
 
     pub async fn admin_list_documents(&self) -> Result<Vec<AdminDocument>, String> {
         let rows = sqlx::query(

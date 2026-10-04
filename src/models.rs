@@ -140,3 +140,21 @@ impl ApiError {
         Self { success: false, error: error.into(), code }
     }
 }
+// ══════════════════════════════════════════════════════════════════
+//  DOCUMENT INGEST REQUESTS
+// ══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Deserialize)]
+pub struct IngestUrlRequest {
+    pub url:         String,
+    pub title:       Option<String>,
+    pub category:    Option<String>,
+    pub subcategory: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct IngestResponse {
+    pub document_id: String,
+    pub chunks:      usize,
+    pub title:       String,
+}

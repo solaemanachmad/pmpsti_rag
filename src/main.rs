@@ -178,6 +178,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/admin/sessions/{id}",      web::delete().to(handlers::admin_delete_session))
                     .route("/admin/documents",          web::get().to(handlers::admin_list_documents))
                     .route("/admin/documents/{id}",     web::delete().to(handlers::admin_delete_document))
+                    .route("/admin/documents/ingest-url", web::post().to(handlers::admin_ingest_url))
                     .route("/admin/logs",                web::get().to(handlers::admin_query_logs))
             )
     })

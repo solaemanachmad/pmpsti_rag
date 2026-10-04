@@ -6,7 +6,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use crate::auth::{extract_bearer, generate_api_key, hash_password, sign_jwt, verify_jwt, verify_password};
-use crate::db::{ChatMessage, ChatSession, ChatSource, Database};
+use crate::db::{ChatMessage, ChatSession, ChatSource, Database, DocumentChunk};
 use crate::email::send_verification_email;
 use crate::models::*;
 use crate::rag::RagEngine;
@@ -986,5 +986,171 @@ pub async fn admin_query_logs(req: HttpRequest, state: web::Data<AppState>) -> H
             "offset": offset,
         }))),
         Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, format!("{e}"))),
+    }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+//  ADMIN: INGEST DOCUMENT FROM URL
+// ══════════════════════════════════════════════════════════════════
+
+/// Scrape URL, bagi jadi chunks, embed via Gemini, simpan ke DB
+pub async fn admin_ingest_url(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    body:  web::Json<IngestUrlRequest>,
+) -> HttpResponse {
+    // Auth check
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+
+    let url = body.url.trim().to_string();
+    if url.is_empty() || (!url.starts_with("http://") && !url.starts_with("https://")) {
+        return HttpResponse::BadRequest().json(ApiError::new(400, "URL tidak valid"));
+    }
+
+    // 1. Fetch HTML
+    let http = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (compatible; PMPSTI-Bot/1.0)")
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap();
+
+    let html = match http.get(&url).send().await {
+        Ok(r) => match r.text().await {
+            Ok(t) => t,
+            Err(e) => return HttpResponse::BadGateway().json(ApiError::new(502, format!("Gagal baca konten: {e}"))),
+        },
+        Err(e) => return HttpResponse::BadGateway().json(ApiError::new(502, format!("Gagal fetch URL: {e}"))),
+    };
+
+    // 2. Parse HTML → teks bersih
+    let document = scraper::Html::parse_document(&html);
+
+    // Ambil judul dari <title> jika tidak disuplai
+    let page_title = {
+        let sel = scraper::Selector::parse("title").unwrap();
+        document.select(&sel).next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .unwrap_or_default()
+    };
+    let title = body.title.clone()
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| if page_title.is_empty() { url.clone() } else { page_title });
+
+    // Hapus tag script, style, nav, footer, header
+    let remove_sel = scraper::Selector::parse("script,style,nav,footer,header,aside,noscript").unwrap();
+    let body_sel   = scraper::Selector::parse("main, article, .content, body").unwrap();
+
+    let raw_text: String = {
+        // Coba ambil dari main/article dulu, fallback ke body
+        let root = document.select(&body_sel).next().map(|e| {
+            e.text().collect::<Vec<_>>().join(" ")
+        }).unwrap_or_else(|| {
+            document.root_element().text().collect::<Vec<_>>().join(" ")
+        });
+
+        // Bersihkan whitespace berlebih
+        root.split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    let _ = remove_sel; // suppress warning
+
+    if raw_text.len() < 50 {
+        return HttpResponse::UnprocessableEntity()
+            .json(ApiError::new(422, "Konten terlalu pendek atau tidak bisa di-parse"));
+    }
+
+    // 3. Chunk teks (setiap ~800 karakter, overlap ~100)
+    let chunk_size = 800usize;
+    let overlap    = 100usize;
+    let chars: Vec<char> = raw_text.chars().collect();
+    let mut chunks_text: Vec<String> = Vec::new();
+    let mut start = 0usize;
+    while start < chars.len() {
+        let end = (start + chunk_size).min(chars.len());
+        chunks_text.push(chars[start..end].iter().collect());
+        if end >= chars.len() { break; }
+        start += chunk_size.saturating_sub(overlap);
+    }
+
+    // 4. Embed setiap chunk via Gemini
+    let gemini_key = match std::env::var("GEMINI_API_KEY") {
+        Ok(k) => k,
+        Err(_) => return HttpResponse::InternalServerError()
+            .json(ApiError::new(500, "GEMINI_API_KEY tidak dikonfigurasi")),
+    };
+
+    let embed_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
+
+    let category    = body.category.clone().unwrap_or_else(|| "Umum".to_string());
+    let subcategory = body.subcategory.clone().unwrap_or_else(|| "—".to_string());
+    let document_id = format!("url-{}", uuid::Uuid::new_v4());
+
+    let mut doc_chunks: Vec<DocumentChunk> = Vec::new();
+
+    for (i, chunk_text) in chunks_text.iter().enumerate() {
+        #[derive(serde::Serialize)]
+        struct EmbedReq { content: EmbedContent, #[serde(rename="outputDimensionality")] output_dimensionality: u32 }
+        #[derive(serde::Serialize)]
+        struct EmbedContent { parts: Vec<EmbedPart> }
+        #[derive(serde::Serialize)]
+        struct EmbedPart { text: String }
+        #[derive(serde::Deserialize)]
+        struct EmbedResp { embedding: EmbedVals }
+        #[derive(serde::Deserialize)]
+        struct EmbedVals { values: Vec<f32> }
+
+        let embed_body = EmbedReq {
+            content: EmbedContent { parts: vec![EmbedPart { text: chunk_text.clone() }] },
+            output_dimensionality: 768,
+        };
+
+        let resp = match http.post(embed_url)
+            .header("x-goog-api-key", &gemini_key)
+            .json(&embed_body)
+            .send().await
+        {
+            Ok(r) => r,
+            Err(e) => return HttpResponse::BadGateway()
+                .json(ApiError::new(502, format!("Embed error chunk {i}: {e}"))),
+        };
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body   = resp.text().await.unwrap_or_default();
+            return HttpResponse::BadGateway()
+                .json(ApiError::new(502, format!("Gemini embed {status}: {body}")));
+        }
+
+        let embed_data: EmbedVals = match resp.json::<EmbedResp>().await {
+            Ok(d) => d.embedding,
+            Err(e) => return HttpResponse::InternalServerError()
+                .json(ApiError::new(500, format!("Parse embed response: {e}"))),
+        };
+
+        doc_chunks.push(DocumentChunk {
+            document_id:   document_id.clone(),
+            title:         title.clone(),
+            content:       chunk_text.clone(),
+            source_url:    url.clone(),
+            category:      category.clone(),
+            subcategory:   subcategory.clone(),
+            document_type: "url".to_string(),
+            chunk_index:   i as i32,
+            embedding:     embed_data.values,
+        });
+    }
+
+    // 5. Simpan ke DB
+    match state.db.insert_document_chunks(&doc_chunks).await {
+        Ok(n) => HttpResponse::Ok().json(ApiSuccess::new(IngestResponse {
+            document_id,
+            chunks: n,
+            title,
+        })),
+        Err(e) => HttpResponse::InternalServerError()
+            .json(ApiError::new(500, format!("DB error: {e}"))),
     }
 }
