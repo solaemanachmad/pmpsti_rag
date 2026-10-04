@@ -138,10 +138,7 @@
   <!-- ── Header ── -->
   <header class="border-b bg-[#002147] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-30">
     <div class="flex items-center gap-3">
-      <picture>
-        <source srcset="/ugm-logo-white.png" media="(prefers-color-scheme: dark)" />
-        <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-11 w-auto shrink-0" />
-      </picture>
+      <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-11 w-auto shrink-0" />
       <div class="leading-tight">
         <div class="font-bold text-base tracking-wide">DTETI</div>
         <div class="text-[11px] text-white/60">Teknik Elektro & Teknologi Informasi UGM</div>

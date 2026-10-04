@@ -187,10 +187,7 @@
   <!-- Top bar -->
   <header class="bg-[#002147] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-30 border-b border-white/10">
     <div class="flex items-center gap-3">
-      <picture>
-        <source srcset="/ugm-logo-white.png" media="(prefers-color-scheme: dark)" />
-        <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-10 w-auto" />
-      </picture>
+      <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-10 w-auto" />
       <div>
         <div class="font-bold text-sm">Panel Admin</div>
         <div class="text-[11px] text-white/50">DTETI — Teknik Elektro & Teknologi Informasi UGM</div>
