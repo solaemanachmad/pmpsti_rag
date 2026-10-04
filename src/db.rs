@@ -1208,7 +1208,6 @@ pub struct AdminSession {
     pub updated_at:    String,
 }
 
-#[derive(Debug, serde::Serialize)]
 // ── Struct untuk ingest dokumen baru ──────────────────────────
 #[derive(Debug, Clone)]
 pub struct DocumentChunk {
@@ -1223,6 +1222,7 @@ pub struct DocumentChunk {
     pub embedding:     Vec<f32>,
 }
 
+#[derive(Debug, serde::Serialize)]
 pub struct AdminDocument {
     pub document_id:   String,
     pub title:         String,

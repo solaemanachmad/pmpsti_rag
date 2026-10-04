@@ -781,7 +781,7 @@ pub async fn admin_create_user(
         .to_string();
 
     // Generate random password — user can reset later
-    use rand::Rng;
+    use rand::RngExt;
     let tmp_pw: String = rand::rng()
         .sample_iter(rand::distr::Alphanumeric)
         .take(16)
@@ -860,7 +860,7 @@ pub async fn admin_delete_user(
     }
     let user_id = path.into_inner();
     // Prevent self-deletion
-    if claims.sub == user_id {
+    if claims.sub.parse::<i64>().ok() == Some(user_id) {
         return HttpResponse::BadRequest().json(ApiError::new(400, "Tidak dapat menghapus akun sendiri"));
     }
     match state.db.admin_delete_user(user_id).await {
