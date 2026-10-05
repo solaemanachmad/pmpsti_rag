@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { authStore, isLoggedIn, currentUser } from '$lib/stores/auth';
+  import { authStore, isLoggedIn, currentUser, authReady } from '$lib/stores/auth';
   import { auth } from '$lib/api/client';
   import { MessageSquare, Key, BarChart3, LogOut, User, Menu, X, Moon, Sun, ChevronDown } from 'lucide-svelte';
 
@@ -16,16 +16,20 @@
   onMount(async () => {
     dark = document.documentElement.classList.contains('dark');
     if ($isLoggedIn) {
-      try { const user = await auth.me(); authStore.setUser(user); }
-      catch { authStore.logout(); goto('/login'); }
-    } else if (!publicRoutes.includes($page.url.pathname)) {
-      goto('/login');
+      try {
+        const user = await auth.me();
+        authStore.setUser(user);  // juga set ready = true
+      } catch {
+        authStore.logout();       // juga set ready = true
+        goto('/login');
+      }
+    } else {
+      authStore.setReady();       // tidak login, tapi ready
+      if (!publicRoutes.includes($page.url.pathname)) {
+        goto('/login');
+      }
     }
   });
-
-  $: if (typeof window !== 'undefined' && !$isLoggedIn && !publicRoutes.includes($page.url.pathname)) {
-    goto('/login');
-  }
 
   function toggleDark() {
     dark = !dark;
@@ -51,7 +55,6 @@
   const navActive = 'bg-white/15 text-white';
   const navIdle   = 'text-white/70 hover:text-white hover:bg-white/10';
 
-  // Mobile drawer nav
   const mobileBase   = 'flex items-center gap-2.5 px-3 py-2.5 rounded-md text-sm transition-colors';
   const mobileActive = 'bg-accent/20 text-foreground font-medium';
   const mobileIdle   = 'text-muted-foreground hover:bg-muted hover:text-foreground';
@@ -59,10 +62,15 @@
 
 {#if isPublic}
   <slot />
+{:else if !$authReady}
+  <!-- Tunggu auth selesai verify — cegah flash/redirect prematur -->
+  <div class="flex h-screen items-center justify-center bg-background">
+    <div class="h-8 w-8 rounded-full border-2 border-muted border-t-primary animate-spin"></div>
+  </div>
 {:else if $isLoggedIn}
   <div class="flex flex-col h-screen overflow-hidden bg-background">
 
-    <!-- ── Topbar (desktop + mobile) ── -->
+    <!-- ── Topbar ── -->
     <header class="bg-[#002147] text-white h-14 flex items-center px-4 gap-4 shrink-0 z-40 border-b border-white/10">
 
       <!-- Logo -->
@@ -86,19 +94,16 @@
         {/if}
       </nav>
 
-      <!-- Spacer -->
       <div class="flex-1"></div>
 
       <!-- Right side — desktop -->
       <div class="hidden md:flex items-center gap-1">
-        <!-- Dark mode toggle -->
         <button on:click={toggleDark}
           class="p-2 rounded-md text-white/70 hover:text-white hover:bg-white/10 transition-colors"
           title={dark ? 'Light mode' : 'Dark mode'}>
           {#if dark}<Sun size={16} />{:else}<Moon size={16} />{/if}
         </button>
 
-        <!-- User dropdown -->
         <div class="relative">
           <button on:click={() => userDropdown = !userDropdown}
             class="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm text-white/70
@@ -109,9 +114,7 @@
           </button>
 
           {#if userDropdown}
-            <!-- Backdrop -->
             <div class="fixed inset-0 z-40" on:click={() => userDropdown = false} role="presentation"></div>
-            <!-- Dropdown -->
             <div class="absolute right-0 top-full mt-1.5 w-48 bg-card border rounded-xl shadow-lg z-50 py-1 overflow-hidden">
               <a href="/profile" on:click={() => userDropdown = false}
                 class="flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground hover:bg-muted transition-colors {isProfile ? 'font-medium' : ''}">

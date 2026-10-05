@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { currentUser } from '$lib/stores/auth';
+  import { currentUser, authReady } from '$lib/stores/auth';
   import { admin } from '$lib/api/client';
   import type { QueryLogStats, AdminUser, AdminDocument } from '$lib/api/client';
   import {
@@ -108,18 +108,25 @@
   let logsLoading = false;
   let logsError = '';
 
-  // ── Access guard ──
+  // ── Access guard — tunggu authReady agar tidak redirect prematur ──
   onMount(() => {
-    const unsubscribe = currentUser.subscribe(u => {
-      if (u === null) { goto('/login'); return; }
-      if (u && u.role !== 'admin') { goto('/chat'); return; }
-      if (u?.role === 'admin') {
-        unsubscribe();
-        // Load stats lazily — hanya saat tab stats aktif (default)
-        loadStats();
-      }
+    const unsubscribe = authReady.subscribe(ready => {
+      if (!ready) return;  // belum selesai verify
+      unsubscribe();
+      const u = getCurrentUser();
+      if (!u) { goto('/login'); return; }
+      if (u.role !== 'admin') { goto('/chat'); return; }
+      loadStats();
     });
   });
+
+  // Helper: baca nilai currentUser store saat ini (satu kali)
+  function getCurrentUser() {
+    let val: import('$lib/api/client').UserPublic | null = null;
+    const unsub = currentUser.subscribe(u => { val = u; });
+    unsub();
+    return val;
+  }
 
   async function loadStats() {
     statsLoading = true; statsError = '';
