@@ -16,25 +16,28 @@
   onMount(async () => {
     dark = document.documentElement.classList.contains('dark');
 
-    if ($isLoggedIn) {
-      // Jika token & user sudah ada di localStorage → langsung ready (non-blocking)
-      // Verifikasi token di background — jika expired baru logout
-      if ($currentUser) {
-        authStore.setReady();  // render halaman seketika
-      }
-
-      // Background verify — tidak blok render
+    // Verifikasi sesi via cookie — auth.me() baca httpOnly cookie
+    if ($currentUser) {
+      // User ada di localStorage cache → render seketika (non-blocking)
+      authStore.setReady();
+      // Background verify — refresh data & cek cookie masih valid
       auth.me().then(user => {
-        authStore.setUser(user);  // update data terbaru
+        authStore.setUser(user);
       }).catch(() => {
-        // Token expired/invalid → logout
+        // Cookie expired/invalid → logout
         authStore.logout();
         goto('/login');
       });
     } else {
-      authStore.setReady();
-      if (!publicRoutes.includes($page.url.pathname)) {
-        goto('/login');
+      // Tidak ada cache — coba auth.me() sekali (mungkin ada cookie dari session lain)
+      try {
+        const user = await auth.me();
+        authStore.setUser(user);  // setReady dipanggil di dalam setUser
+      } catch {
+        authStore.setReady();
+        if (!publicRoutes.includes($page.url.pathname)) {
+          goto('/login');
+        }
       }
     }
   });
@@ -45,8 +48,9 @@
     localStorage.setItem('theme', dark ? 'dark' : 'light');
   }
 
-  function logout() {
-    authStore.logout();
+  async function logout() {
+    try { await auth.logout(); } catch { /* tetap logout meski gagal */ }
+    authStore.logout();  // hapus user dari store & localStorage
     goto('/login');
   }
 

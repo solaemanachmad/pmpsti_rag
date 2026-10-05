@@ -16,7 +16,7 @@
     error = '';
     try {
       const res = await auth.login(email, password);
-      authStore.login(res.token, res.user);
+      authStore.login(res.user);
       goto('/chat');
     } catch (e: any) {
       error = e.message ?? 'Login gagal';

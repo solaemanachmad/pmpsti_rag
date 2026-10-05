@@ -36,19 +36,24 @@ pub struct AppState {
 // ══════════════════════════════════════════════════════════════════
 
 fn require_auth(req: &HttpRequest, jwt_secret: &str) -> Result<JwtClaims, HttpResponse> {
-    let auth = req
+    // Coba baca dari httpOnly cookie dulu
+    let token_from_cookie = req.cookie("auth_token").map(|c| c.value().to_string());
+
+    // Fallback: Authorization header (untuk API key / backward compat)
+    let token_from_header = req
         .headers()
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
+        .and_then(|v| extract_bearer(v))
+        .map(|s| s.to_string());
+
+    let token = token_from_cookie
+        .or(token_from_header)
         .ok_or_else(|| {
             HttpResponse::Unauthorized().json(ApiError::new(401, "Token tidak ditemukan"))
         })?;
 
-    let token = extract_bearer(auth).ok_or_else(|| {
-        HttpResponse::Unauthorized().json(ApiError::new(401, "Format token tidak valid"))
-    })?;
-
-    verify_jwt(token, jwt_secret).map_err(|_| {
+    verify_jwt(&token, jwt_secret).map_err(|_| {
         HttpResponse::Unauthorized().json(ApiError::new(401, "Token tidak valid atau sudah expired"))
     })
 }
@@ -223,18 +228,36 @@ pub async fn login(
                 .json(ApiError::new(500, "Gagal membuat token")),
         };
 
-    HttpResponse::Ok().json(ApiSuccess::new(AuthResponse {
-        token,
-        token_type: "Bearer".to_string(),
-        expires_in,
-        user: UserPublic {
-            id:           user.id,
-            email:        user.email,
-            display_name: user.display_name,
-            role:         user.role,
-            created_at:   user.created_at,
-        },
-    }))
+    let user_public = UserPublic {
+        id:           user.id,
+        email:        user.email,
+        display_name: user.display_name,
+        role:         user.role,
+        created_at:   user.created_at,
+    };
+
+    // Set httpOnly cookie — tidak bisa diakses JavaScript
+    let cookie = format!(
+        "auth_token={}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age={}",
+        token, expires_in
+    );
+
+    HttpResponse::Ok()
+        .append_header(("Set-Cookie", cookie))
+        .json(ApiSuccess::new(AuthResponse {
+            token: String::new(),   // kosong — token ada di cookie
+            token_type: "Bearer".to_string(),
+            expires_in,
+            user: user_public,
+        }))
+}
+
+pub async fn logout_handler(_req: HttpRequest) -> HttpResponse {
+    // Clear httpOnly cookie
+    let clear = "auth_token=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0";
+    HttpResponse::Ok()
+        .append_header(("Set-Cookie", clear))
+        .json(serde_json::json!({"data": {"message": "Logout berhasil"}}))
 }
 
 pub async fn get_me(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {

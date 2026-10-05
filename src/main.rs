@@ -31,6 +31,7 @@ struct Config {
     gemini_model:   String,
     resend_api_key: String,
     app_base_url:   String,
+    frontend_url:   String,
 }
 
 impl Config {
@@ -52,6 +53,8 @@ impl Config {
                 .unwrap_or_else(|_| "gemini-2.0-flash-lite".to_string()),
             resend_api_key: std::env::var("RESEND_API_KEY").unwrap_or_default(),
             app_base_url:   std::env::var("APP_BASE_URL")
+                .unwrap_or_else(|_| "https://pmpsti-rag.vercel.app".to_string()),
+            frontend_url:   std::env::var("FRONTEND_URL")
                 .unwrap_or_else(|_| "https://pmpsti-rag.vercel.app".to_string()),
         }
     }
@@ -139,13 +142,17 @@ async fn main() -> std::io::Result<()> {
                     .add(("Content-Security-Policy",
                         "default-src 'self'; script-src 'self'; object-src 'none'"))
             )
-            .wrap(
+            .wrap({
+                let origin = cfg.frontend_url.clone();
                 actix_cors::Cors::default()
-                    .allow_any_origin()
+                    .allowed_origin(&origin)
+                    .allowed_origin("http://localhost:5173")
+                    .allowed_origin("http://localhost:4173")
                     .allow_any_method()
                     .allow_any_header()
-                    .max_age(3600),
-            )
+                    .supports_credentials()
+                    .max_age(3600)
+            })
             .route("/health", web::get().to(handlers::health))
             .service(
                 web::scope("/api/auth")
@@ -155,6 +162,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/me",              web::get().to(handlers::get_me))
                     .route("/me",              web::patch().to(handlers::update_profile))
                     .route("/me/password",     web::patch().to(handlers::update_password))
+                    .route("/logout",           web::post().to(handlers::logout_handler))
             )
             .service(
                 web::scope("/api")

@@ -8,19 +8,16 @@ function resolveApiBase(): string {
 }
 const BASE = resolveApiBase() + '/api';
 
-function getToken(): string | null {
-  if (typeof localStorage === 'undefined') return null;
-  return localStorage.getItem('token');
-}
-
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> ?? {})
   };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    headers,
+    credentials: 'include',  // kirim httpOnly cookie otomatis
+  });
   const json = await res.json();
   if (!res.ok) throw new Error(json?.error?.message ?? json?.error ?? `HTTP ${res.status}`);
   return (json.data ?? json) as T;
@@ -39,6 +36,7 @@ export const auth = {
       body: JSON.stringify({ email, password })
     }),
   me: () => request<UserPublic>('/auth/me'),
+  logout: () => request<{ message: string }>('/auth/logout', { method: 'POST' }),
   updateProfile: (data: { display_name?: string; email?: string }) =>
     request('/auth/me', { method: 'PATCH', body: JSON.stringify(data) }),
   updatePassword: (current_password: string, new_password: string) =>
