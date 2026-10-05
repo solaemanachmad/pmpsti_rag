@@ -36,6 +36,17 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    chromium-browser \
+    fonts-liberation \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2t64 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -43,6 +54,8 @@ COPY --from=builder /app/target/release/pmpsti ./pmpsti
 
 RUN chown -R ubuntu:ubuntu /app
 USER ubuntu
+
+ENV CHROMIUM_BIN=/usr/bin/chromium-browser
 
 EXPOSE 7860
 

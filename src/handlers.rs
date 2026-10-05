@@ -1125,6 +1125,76 @@ pub async fn admin_query_logs(req: HttpRequest, state: web::Data<AppState>) -> H
 // ══════════════════════════════════════════════════════════════════
 
 /// Scrape URL, bagi jadi chunks, embed via Gemini, simpan ke DB
+// ─── Fetch HTML — fallback ke Chromium headless jika konten JS-heavy ───────────
+/// Coba reqwest dulu. Jika HTML hasil fetch mengandung penanda DataTables /
+/// JS-rendered table (tbody kosong, data-loaded via script), jalankan
+/// chromium-browser --headless --dump-dom untuk mendapat DOM yang sudah
+/// di-render JavaScript.
+async fn fetch_html_with_js(url: &str) -> Result<String, String> {
+    // 1. Reqwest biasa
+    let http = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (compatible; PMPSTI-Bot/1.0)")
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let html = http.get(url).send().await
+        .map_err(|e| format!("Gagal fetch URL: {e}"))?
+        .text().await
+        .map_err(|e| format!("Gagal baca konten: {e}"))?;
+
+    // 2. Deteksi apakah halaman perlu JS render:
+    //    - Ada DataTables / pakai script untuk load data tabel
+    //    - tbody kosong (< 200 karakter antara <tbody dan </tbody>)
+    let needs_js = html.contains("DataTable")
+        || html.contains("datatables")
+        || html.contains("data-src=")
+        || {
+            // Cek tbody kosong
+            let lower = html.to_lowercase();
+            if let Some(start) = lower.find("<tbody") {
+                if let Some(end) = lower[start..].find("</tbody>") {
+                    let inner = &html[start..start+end];
+                    inner.trim().len() < 300
+                } else { false }
+            } else { false }
+        };
+
+    if !needs_js {
+        return Ok(html);
+    }
+
+    // 3. Fallback: Chromium headless
+    let chromium = std::env::var("CHROMIUM_BIN")
+        .unwrap_or_else(|_| "chromium-browser".to_string());
+
+    let output = tokio::process::Command::new(&chromium)
+        .args([
+            "--headless=new",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            "--dump-dom",
+            "--virtual-time-budget=5000",  // tunggu 5 detik JS selesai
+            url,
+        ])
+        .output()
+        .await
+        .map_err(|e| format!("Chromium tidak tersedia: {e}"))?;
+
+    if !output.status.success() {
+        // Fallback ke reqwest hasil jika chromium gagal
+        return Ok(html);
+    }
+
+    let rendered = String::from_utf8_lossy(&output.stdout).to_string();
+    if rendered.len() > html.len() {
+        Ok(rendered)
+    } else {
+        Ok(html)
+    }
+}
+
 pub async fn admin_ingest_url(
     req:   HttpRequest,
     state: web::Data<AppState>,
@@ -1141,20 +1211,18 @@ pub async fn admin_ingest_url(
         return HttpResponse::BadRequest().json(ApiError::new(400, "URL tidak valid"));
     }
 
-    // 1. Fetch HTML
+    // 1. Fetch HTML (otomatis fallback ke Chromium headless jika halaman JS-heavy)
+    let html = match fetch_html_with_js(&url).await {
+        Ok(h) => h,
+        Err(e) => return HttpResponse::BadGateway().json(ApiError::new(502, e)),
+    };
+
+    // Buat http client untuk embed (dipakai di langkah 4)
     let http = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (compatible; PMPSTI-Bot/1.0)")
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .unwrap();
-
-    let html = match http.get(&url).send().await {
-        Ok(r) => match r.text().await {
-            Ok(t) => t,
-            Err(e) => return HttpResponse::BadGateway().json(ApiError::new(502, format!("Gagal baca konten: {e}"))),
-        },
-        Err(e) => return HttpResponse::BadGateway().json(ApiError::new(502, format!("Gagal fetch URL: {e}"))),
-    };
 
     // 2. Parse HTML → teks bersih
     let document = scraper::Html::parse_document(&html);
