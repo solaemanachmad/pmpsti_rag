@@ -817,18 +817,6 @@ impl Database {
     //  PASSWORD RESET
     // ════════════════════════════════════════════════════════════
 
-    pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>, String> {
-        sqlx::query_as::<_, User>(
-            "SELECT id, email, password_hash, display_name, role, is_active,
-                    email_verified, created_at, updated_at
-             FROM users WHERE email = $1"
-        )
-        .bind(email)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| e.to_string())
-    }
-
     pub async fn create_password_reset_token(
         &self,
         user_id: i64,
