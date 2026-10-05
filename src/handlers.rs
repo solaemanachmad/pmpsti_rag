@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::auth::{extract_bearer, generate_api_key, hash_password, sign_jwt, verify_jwt, verify_password};
 use crate::db::{ChatMessage, ChatSession, ChatSource, Database, DocumentChunk};
-use crate::email::send_verification_email;
+use crate::email::{send_verification_email, send_password_reset_email, send_welcome_email};
 use crate::models::*;
 use crate::rag::RagEngine;
 
@@ -824,6 +824,14 @@ pub async fn admin_create_user(
         Err(e) => return HttpResponse::Conflict().json(ApiError::new(409, e)),
     };
 
+    // Buat password reset token sebagai "set password" link
+    let reset_token = Uuid::new_v4().to_string();
+    let _ = state.db.create_password_reset_token(user.id, &reset_token).await;
+    let reset_url = format!("{}/reset-password?token={}", state.app_base_url, reset_token);
+
+    // Kirim welcome email (non-blocking — jangan gagalkan create user)
+    let _ = send_welcome_email(&state.resend_key, &user.email, &reset_url, &state.app_base_url).await;
+
     HttpResponse::Created().json(ApiSuccess::new(serde_json::json!({
         "id": user.id,
         "email": user.email,
@@ -832,6 +840,105 @@ pub async fn admin_create_user(
         "is_active": true,
         "created_at": user.created_at,
     })))
+}
+
+// ── Forgot Password ──
+pub async fn forgot_password(
+    state: web::Data<AppState>,
+    body:  web::Json<serde_json::Value>,
+) -> HttpResponse {
+    let email = match body.get("email").and_then(|v| v.as_str()) {
+        Some(e) if !e.is_empty() => e.to_string(),
+        _ => return HttpResponse::BadRequest().json(ApiError::new(400, "Email wajib diisi")),
+    };
+
+    // Selalu return OK agar tidak bocorkan apakah email terdaftar
+    let user = match state.db.get_user_by_email(&email).await {
+        Ok(Some(u)) => u,
+        _ => return HttpResponse::Ok().json(ApiSuccess::new(
+            serde_json::json!({"message": "Jika email terdaftar, link reset akan dikirim."})
+        )),
+    };
+
+    if !user.is_active {
+        return HttpResponse::Ok().json(ApiSuccess::new(
+            serde_json::json!({"message": "Jika email terdaftar, link reset akan dikirim."})
+        ));
+    }
+
+    let token = Uuid::new_v4().to_string();
+    if let Err(e) = state.db.create_password_reset_token(user.id, &token).await {
+        log::error!("Gagal buat reset token: {e}");
+        return HttpResponse::InternalServerError()
+            .json(ApiError::new(500, "Gagal membuat token reset"));
+    }
+
+    let reset_url = format!("{}/reset-password?token={}", state.app_base_url, token);
+    if let Err(e) = send_password_reset_email(
+        &state.resend_key, &email, &reset_url, &state.app_base_url
+    ).await {
+        log::error!("Gagal kirim reset email: {e}");
+        return HttpResponse::InternalServerError()
+            .json(ApiError::new(500, "Gagal mengirim email reset"));
+    }
+
+    HttpResponse::Ok().json(ApiSuccess::new(
+        serde_json::json!({"message": "Jika email terdaftar, link reset akan dikirim."})
+    ))
+}
+
+// ── Reset Password ──
+pub async fn reset_password(
+    state: web::Data<AppState>,
+    body:  web::Json<serde_json::Value>,
+) -> HttpResponse {
+    let token = match body.get("token").and_then(|v| v.as_str()) {
+        Some(t) if !t.is_empty() => t.to_string(),
+        _ => return HttpResponse::BadRequest().json(ApiError::new(400, "Token wajib diisi")),
+    };
+    let new_password = match body.get("password").and_then(|v| v.as_str()) {
+        Some(p) if p.len() >= 8 => p.to_string(),
+        _ => return HttpResponse::BadRequest()
+            .json(ApiError::new(400, "Password minimal 8 karakter")),
+    };
+
+    let user_id = match state.db.consume_password_reset_token(&token).await {
+        Ok(Some(id)) => id,
+        Ok(None) => return HttpResponse::BadRequest()
+            .json(ApiError::new(400, "Token tidak valid atau sudah kadaluarsa")),
+        Err(e) => {
+            log::error!("consume_password_reset_token error: {e}");
+            return HttpResponse::InternalServerError()
+                .json(ApiError::new(500, "Gagal memverifikasi token"));
+        }
+    };
+
+    let hash = match tokio::task::spawn_blocking({
+        let pw = new_password.clone();
+        move || hash_password(&pw)
+    }).await {
+        Ok(Ok(h)) => h,
+        _ => return HttpResponse::InternalServerError()
+            .json(ApiError::new(500, "Gagal hash password")),
+    };
+
+    if let Err(e) = state.db.update_user_password(user_id, &hash).await {
+        log::error!("update_user_password error: {e}");
+        return HttpResponse::InternalServerError()
+            .json(ApiError::new(500, "Gagal update password"));
+    }
+
+    // Aktifkan + verifikasi email jika belum (user baru dari admin)
+    let _ = sqlx::query(
+        "UPDATE users SET email_verified = true, is_active = true WHERE id = $1"
+    )
+    .bind(user_id)
+    .execute(&state.db.pool)
+    .await;
+
+    HttpResponse::Ok().json(ApiSuccess::new(
+        serde_json::json!({"message": "Password berhasil diubah. Silakan login."})
+    ))
 }
 
 pub async fn admin_set_user_role(

@@ -163,6 +163,8 @@ async fn main() -> std::io::Result<()> {
                     .route("/me",              web::patch().to(handlers::update_profile))
                     .route("/me/password",     web::patch().to(handlers::update_password))
                     .route("/logout",           web::post().to(handlers::logout_handler))
+                    .route("/forgot-password",  web::post().to(handlers::forgot_password))
+                    .route("/reset-password",   web::post().to(handlers::reset_password))
             )
             .service(
                 web::scope("/api")

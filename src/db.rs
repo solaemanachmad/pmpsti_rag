@@ -277,6 +277,23 @@ impl Database {
             ON email_verifications(token)
         ").execute(&self.pool).await?;
 
+        // Password reset tokens
+        sqlx::query("
+            CREATE TABLE IF NOT EXISTS password_resets (
+                id         BIGSERIAL PRIMARY KEY,
+                user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token      TEXT UNIQUE NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used_at    TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        ").execute(&self.pool).await?;
+
+        sqlx::query("
+            CREATE INDEX IF NOT EXISTS password_resets_token_idx
+            ON password_resets(token)
+        ").execute(&self.pool).await?;
+
         // ── Safe migrations: tambah kolom baru kalau belum ada ──
         // (PostgreSQL 9.6+ mendukung ADD COLUMN IF NOT EXISTS)
         let migrations = [
@@ -794,6 +811,78 @@ impl Database {
         .await
         .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  PASSWORD RESET
+    // ════════════════════════════════════════════════════════════
+
+    pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>, String> {
+        sqlx::query_as::<_, User>(
+            "SELECT id, email, password_hash, display_name, role, is_active,
+                    email_verified, created_at, updated_at
+             FROM users WHERE email = $1"
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    pub async fn create_password_reset_token(
+        &self,
+        user_id: i64,
+        token:   &str,
+    ) -> Result<(), String> {
+        // Hapus token lama yang belum dipakai
+        sqlx::query("DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        sqlx::query(
+            "INSERT INTO password_resets (user_id, token, expires_at)
+             VALUES ($1, $2, NOW() + INTERVAL '1 hour')",
+        )
+        .bind(user_id)
+        .bind(token)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn consume_password_reset_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<i64>, String> {
+        let row = sqlx::query(
+            "SELECT id, user_id FROM password_resets
+             WHERE token = $1
+               AND expires_at > NOW()
+               AND used_at IS NULL",
+        )
+        .bind(token)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let row = match row {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let reset_id: i64 = row.get("id");
+        let user_id:  i64 = row.get("user_id");
+
+        sqlx::query("UPDATE password_resets SET used_at = NOW() WHERE id = $1")
+            .bind(reset_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(Some(user_id))
     }
 
     pub async fn deactivate_user(&self, user_id: i64) -> Result<(), String> {

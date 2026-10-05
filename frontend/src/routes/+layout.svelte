@@ -11,7 +11,7 @@
   let userDropdown = false;
   let dark = false;
 
-  const publicRoutes = ['/', '/login', '/register'];
+  const publicRoutes = ['/', '/login', '/register', '/verify-email', '/forgot-password', '/reset-password'];
 
   onMount(async () => {
     dark = document.documentElement.classList.contains('dark');
