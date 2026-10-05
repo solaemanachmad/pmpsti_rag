@@ -15,16 +15,24 @@
 
   onMount(async () => {
     dark = document.documentElement.classList.contains('dark');
+
     if ($isLoggedIn) {
-      try {
-        const user = await auth.me();
-        authStore.setUser(user);  // juga set ready = true
-      } catch {
-        authStore.logout();       // juga set ready = true
-        goto('/login');
+      // Jika token & user sudah ada di localStorage → langsung ready (non-blocking)
+      // Verifikasi token di background — jika expired baru logout
+      if ($currentUser) {
+        authStore.setReady();  // render halaman seketika
       }
+
+      // Background verify — tidak blok render
+      auth.me().then(user => {
+        authStore.setUser(user);  // update data terbaru
+      }).catch(() => {
+        // Token expired/invalid → logout
+        authStore.logout();
+        goto('/login');
+      });
     } else {
-      authStore.setReady();       // tidak login, tapi ready
+      authStore.setReady();
       if (!publicRoutes.includes($page.url.pathname)) {
         goto('/login');
       }
@@ -45,7 +53,6 @@
   $: isPublic    = publicRoutes.includes($page.url.pathname);
   $: isAdminUser = $currentUser?.role === 'admin';
 
-  // Reactive per-route active state
   $: isChat      = $page.url.pathname === '/chat'    || $page.url.pathname.startsWith('/chat/');
   $: isKeys      = $page.url.pathname === '/keys'    || $page.url.pathname.startsWith('/keys/');
   $: isAdminPage = $page.url.pathname === '/admin'   || $page.url.pathname.startsWith('/admin/');
@@ -63,9 +70,9 @@
 {#if isPublic}
   <slot />
 {:else if !$authReady}
-  <!-- Tunggu auth selesai verify — cegah flash/redirect prematur -->
+  <!-- Spinner singkat — hanya muncul jika tidak ada data di localStorage -->
   <div class="flex h-screen items-center justify-center bg-background">
-    <div class="h-8 w-8 rounded-full border-2 border-muted border-t-primary animate-spin"></div>
+    <div class="h-7 w-7 rounded-full border-2 border-muted border-t-primary animate-spin"></div>
   </div>
 {:else if $isLoggedIn}
   <div class="flex flex-col h-screen overflow-hidden bg-background">
@@ -73,13 +80,11 @@
     <!-- ── Topbar ── -->
     <header class="bg-[#002147] text-white h-14 flex items-center px-4 gap-4 shrink-0 z-40 border-b border-white/10">
 
-      <!-- Logo -->
       <a href="/chat" class="flex items-center gap-2.5 shrink-0 mr-2">
         <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-8 w-auto" />
         <span class="font-bold text-sm tracking-wide">DTETI</span>
       </a>
 
-      <!-- Nav links — desktop only -->
       <nav class="hidden md:flex items-center gap-1">
         <a href="/chat" class="{navBase} {isChat ? navActive : navIdle}">
           <MessageSquare size={15} /><span>Chat</span>
@@ -96,7 +101,6 @@
 
       <div class="flex-1"></div>
 
-      <!-- Right side — desktop -->
       <div class="hidden md:flex items-center gap-1">
         <button on:click={toggleDark}
           class="p-2 rounded-md text-white/70 hover:text-white hover:bg-white/10 transition-colors"
@@ -131,14 +135,12 @@
         </div>
       </div>
 
-      <!-- Mobile: hamburger -->
       <button on:click={() => menuOpen = !menuOpen}
         class="md:hidden p-1.5 rounded-md text-white/70 hover:text-white hover:bg-white/10 transition-colors">
         {#if menuOpen}<X size={20} />{:else}<Menu size={20} />{/if}
       </button>
     </header>
 
-    <!-- Mobile drawer -->
     {#if menuOpen}
       <div class="md:hidden fixed inset-0 z-30 bg-black/40 backdrop-blur-sm top-14"
         on:click={() => menuOpen = false} role="presentation">
@@ -176,7 +178,6 @@
       </div>
     {/if}
 
-    <!-- Main content -->
     <main class="flex-1 overflow-hidden">
       <slot />
     </main>
