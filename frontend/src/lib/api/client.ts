@@ -1,12 +1,7 @@
-// Deteksi API URL: env var (Vercel) > HF Space otomatis > proxy lokal
-function resolveApiBase(): string {
-  if (import.meta.env.PUBLIC_API_URL) return import.meta.env.PUBLIC_API_URL;
-  if (typeof window !== 'undefined' && window.location.hostname.endsWith('.hf.space')) {
-    return import.meta.env.PUBLIC_HF_BACKEND_URL || '';
-  }
-  return '';
-}
-const BASE = resolveApiBase() + '/api';
+import { PUBLIC_API_URL } from '$env/static/public';
+
+// Deteksi API URL: env var (Vercel/SvelteKit) > proxy lokal
+const BASE = (PUBLIC_API_URL || '') + '/api';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
