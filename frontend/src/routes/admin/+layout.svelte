@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { currentUser, authReady } from '$lib/stores/auth';
@@ -12,16 +11,14 @@
     { href: '/admin/logs',      label: 'Log Query', icon: List },
   ];
 
-  onMount(() => {
-    const unsub = authReady.subscribe(ready => {
-      if (!ready) return;
-      unsub();
-      let u: import('$lib/api/client').UserPublic | null = null;
-      const u2 = currentUser.subscribe(v => { u = v; }); u2();
-      if (!u) { goto('/login'); return; }
-      if ((u as any).role !== 'admin') goto('/chat');
-    });
-  });
+  // Reactive guard — runs whenever authReady or currentUser changes
+  $: if ($authReady) {
+    if (!$currentUser) {
+      goto('/login');
+    } else if ($currentUser.role !== 'admin') {
+      goto('/chat');
+    }
+  }
 
   $: active = $page.url.pathname;
 </script>
@@ -46,9 +43,11 @@
   </div>
 
   <!-- Page content -->
-  <div class="flex-1 overflow-y-auto">
-    <div class="max-w-5xl mx-auto px-4 py-6">
-      <slot />
+  {#if $authReady && $currentUser?.role === 'admin'}
+    <div class="flex-1 overflow-y-auto">
+      <div class="max-w-5xl mx-auto px-4 py-6">
+        <slot />
+      </div>
     </div>
-  </div>
+  {/if}
 </div>
