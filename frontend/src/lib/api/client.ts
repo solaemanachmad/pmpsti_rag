@@ -32,6 +32,8 @@ export const auth = {
     }),
   me: () => request<UserPublic>('/auth/me'),
   logout: () => request<{ message: string }>('/auth/logout', { method: 'POST' }),
+  verifyEmail: (token: string) =>
+    request<{ message: string }>(`/auth/verify/${encodeURIComponent(token)}`),
   forgotPassword: (email: string) =>
     request<{ message: string }>('/auth/forgot-password', {
       method: 'POST',

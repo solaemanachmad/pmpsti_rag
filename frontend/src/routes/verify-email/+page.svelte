@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { CheckCircle2, XCircle, Loader2 } from 'lucide-svelte';
+  import { auth } from '$lib/api/client';
 
   type State = 'loading' | 'success' | 'error';
   let state: State = 'loading';
@@ -12,15 +13,9 @@
     const token = $page.url.searchParams.get('token');
     if (!token) { state = 'error'; message = 'Token tidak ditemukan di URL.'; return; }
     try {
-      const res = await fetch(`/api/auth/verify/${encodeURIComponent(token)}`);
-      const json = await res.json();
-      if (res.ok) {
-        state = 'success';
-        message = json.data?.message ?? 'Email berhasil diverifikasi!';
-      } else {
-        state = 'error';
-        message = json.error?.message ?? 'Token tidak valid atau sudah kedaluwarsa.';
-      }
+      const result = await auth.verifyEmail(token);
+      state = 'success';
+      message = (result as any)?.message ?? 'Email berhasil diverifikasi!';
     } catch {
       state = 'error';
       message = 'Gagal menghubungi server. Coba lagi nanti.';
