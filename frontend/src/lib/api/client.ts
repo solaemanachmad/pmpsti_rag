@@ -155,7 +155,6 @@ export function askStream(
   onDone: (sources: SourceRef[], session_id: string, ms: number) => void,
   onError: (err: string) => void
 ): () => void {
-  const token = getToken();
   const ctrl = new AbortController();
   let cancelled = false;
 
@@ -163,10 +162,8 @@ export function askStream(
     try {
       const res = await fetch(`${BASE}/ask`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ query, session_id, search_mode: 'hybrid', top_k: 5 }),
         signal: ctrl.signal
       });
