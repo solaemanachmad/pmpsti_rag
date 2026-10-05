@@ -5,24 +5,19 @@
   import { page } from '$app/stores';
   import { authStore, isLoggedIn, currentUser } from '$lib/stores/auth';
   import { auth } from '$lib/api/client';
-  import { MessageSquare, Key, BarChart3, LogOut, User, Menu, X, Moon, Sun } from 'lucide-svelte';
+  import { MessageSquare, Key, BarChart3, LogOut, User, Menu, X, Moon, Sun, ChevronDown } from 'lucide-svelte';
 
   let menuOpen = false;
+  let userDropdown = false;
   let dark = false;
 
   const publicRoutes = ['/', '/login', '/register'];
-  onMount(async () => {
-    // Sync dark state from DOM (set by inline script in app.html)
-    dark = document.documentElement.classList.contains('dark');
 
+  onMount(async () => {
+    dark = document.documentElement.classList.contains('dark');
     if ($isLoggedIn) {
-      try {
-        const user = await auth.me();
-        authStore.setUser(user);
-      } catch {
-        authStore.logout();
-        goto('/login');
-      }
+      try { const user = await auth.me(); authStore.setUser(user); }
+      catch { authStore.logout(); goto('/login'); }
     } else if (!publicRoutes.includes($page.url.pathname)) {
       goto('/login');
     }
@@ -43,116 +38,143 @@
     goto('/login');
   }
 
-  $: isPublic = publicRoutes.includes($page.url.pathname);
-  $: isAdmin = $currentUser?.role === 'admin';
-  const navBase = 'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/20 hover:text-foreground transition-colors cursor-pointer w-full';
-  const navActive = 'bg-accent/20 text-foreground font-medium';
+  $: isPublic    = publicRoutes.includes($page.url.pathname);
+  $: isAdminUser = $currentUser?.role === 'admin';
 
-  // Reactive per-route — dijamin re-evaluate saat $page berubah
-  $: isChat    = $page.url.pathname === '/chat'    || $page.url.pathname.startsWith('/chat/');
-  $: isKeys    = $page.url.pathname === '/keys'    || $page.url.pathname.startsWith('/keys/');
-  $: isAdminPage = $page.url.pathname === '/admin' || $page.url.pathname.startsWith('/admin/');
-  $: isProfile = $page.url.pathname === '/profile' || $page.url.pathname.startsWith('/profile/');
+  // Reactive per-route active state
+  $: isChat      = $page.url.pathname === '/chat'    || $page.url.pathname.startsWith('/chat/');
+  $: isKeys      = $page.url.pathname === '/keys'    || $page.url.pathname.startsWith('/keys/');
+  $: isAdminPage = $page.url.pathname === '/admin'   || $page.url.pathname.startsWith('/admin/');
+  $: isProfile   = $page.url.pathname === '/profile' || $page.url.pathname.startsWith('/profile/');
 
-  function navClass(active: boolean) {
-    return `${navBase} ${active ? navActive : ''}`;
-  }
+  const navBase   = 'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors';
+  const navActive = 'bg-white/15 text-white';
+  const navIdle   = 'text-white/70 hover:text-white hover:bg-white/10';
+
+  // Mobile drawer nav
+  const mobileBase   = 'flex items-center gap-2.5 px-3 py-2.5 rounded-md text-sm transition-colors';
+  const mobileActive = 'bg-accent/20 text-foreground font-medium';
+  const mobileIdle   = 'text-muted-foreground hover:bg-muted hover:text-foreground';
 </script>
 
 {#if isPublic}
   <slot />
 {:else if $isLoggedIn}
-  <div class="flex h-screen overflow-hidden bg-background">
+  <div class="flex flex-col h-screen overflow-hidden bg-background">
 
-    <!-- Sidebar desktop -->
-    <aside class="hidden md:flex w-56 flex-col border-r bg-card">
-      <div class="flex items-center gap-2.5 px-4 py-4 border-b bg-[#002147]">
-        <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-10 w-auto shrink-0" />
-        <div class="leading-tight">
-          <div class="font-bold text-sm text-white">DTETI</div>
-          <div class="text-[10px] text-white/50 leading-none">Teknik Elektro & TI UGM</div>
-        </div>
-      </div>
+    <!-- ── Topbar (desktop + mobile) ── -->
+    <header class="bg-[#002147] text-white h-14 flex items-center px-4 gap-4 shrink-0 z-40 border-b border-white/10">
 
-      <nav class="flex-1 p-2 space-y-0.5 overflow-y-auto">
-        <a href="/chat" class={navClass(isChat)}>
-          <MessageSquare size={16} /><span>Chat</span>
+      <!-- Logo -->
+      <a href="/chat" class="flex items-center gap-2.5 shrink-0 mr-2">
+        <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-8 w-auto" />
+        <span class="font-bold text-sm tracking-wide">DTETI</span>
+      </a>
+
+      <!-- Nav links — desktop only -->
+      <nav class="hidden md:flex items-center gap-1">
+        <a href="/chat" class="{navBase} {isChat ? navActive : navIdle}">
+          <MessageSquare size={15} /><span>Chat</span>
         </a>
-        <a href="/keys" class={navClass(isKeys)}>
-          <Key size={16} /><span>API Keys</span>
+        <a href="/keys" class="{navBase} {isKeys ? navActive : navIdle}">
+          <Key size={15} /><span>API Keys</span>
         </a>
-        {#if isAdmin}
-          <a href="/admin" class={navClass(isAdminPage)}>
-            <BarChart3 size={16} /><span>Admin</span>
+        {#if isAdminUser}
+          <a href="/admin" class="{navBase} {isAdminPage ? navActive : navIdle}">
+            <BarChart3 size={15} /><span>Admin</span>
           </a>
         {/if}
       </nav>
 
-      <div class="p-2 border-t space-y-0.5">
-        <a href="/profile" class={navClass(isProfile)}>
-          <User size={16} />
-          <span class="truncate">{$currentUser?.display_name || $currentUser?.email || 'Profil'}</span>
-        </a>
-        <button on:click={toggleDark}
-          class="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground
-                 hover:bg-muted hover:text-foreground transition-colors cursor-pointer w-full text-left">
-          {#if dark}<Sun size={16} />{:else}<Moon size={16} />{/if}
-          <span>{dark ? 'Light mode' : 'Dark mode'}</span>
-        </button>
-        <button on:click={logout}
-          class="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-destructive
-                 hover:bg-destructive/10 transition-colors cursor-pointer w-full text-left">
-          <LogOut size={16} /><span>Keluar</span>
-        </button>
-      </div>
-    </aside>
+      <!-- Spacer -->
+      <div class="flex-1"></div>
 
-    <!-- Topbar mobile -->
-    <div class="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 h-14 border-b bg-background">
-      <div class="flex items-center gap-2">
-        <img src="/ugm-logo-blue.png"  alt="Logo UGM" class="h-9 w-auto shrink-0 dark:hidden" />
-        <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-9 w-auto shrink-0 hidden dark:block" />
-        <div class="font-bold text-sm">DTETI</div>
-      </div>
-      <div class="flex items-center gap-1">
+      <!-- Right side — desktop -->
+      <div class="hidden md:flex items-center gap-1">
+        <!-- Dark mode toggle -->
         <button on:click={toggleDark}
-          class="p-2 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+          class="p-2 rounded-md text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+          title={dark ? 'Light mode' : 'Dark mode'}>
           {#if dark}<Sun size={16} />{:else}<Moon size={16} />{/if}
         </button>
-        <button on:click={() => menuOpen = !menuOpen} class="p-1.5 rounded-md hover:bg-muted">
-          {#if menuOpen}<X size={18} />{:else}<Menu size={18} />{/if}
-        </button>
-      </div>
-    </div>
 
+        <!-- User dropdown -->
+        <div class="relative">
+          <button on:click={() => userDropdown = !userDropdown}
+            class="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm text-white/70
+                   hover:text-white hover:bg-white/10 transition-colors {isProfile ? 'bg-white/15 text-white' : ''}">
+            <User size={15} />
+            <span class="max-w-[120px] truncate">{$currentUser?.display_name || $currentUser?.email || 'Akun'}</span>
+            <ChevronDown size={13} class="opacity-60" />
+          </button>
+
+          {#if userDropdown}
+            <!-- Backdrop -->
+            <div class="fixed inset-0 z-40" on:click={() => userDropdown = false} role="presentation"></div>
+            <!-- Dropdown -->
+            <div class="absolute right-0 top-full mt-1.5 w-48 bg-card border rounded-xl shadow-lg z-50 py-1 overflow-hidden">
+              <a href="/profile" on:click={() => userDropdown = false}
+                class="flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground hover:bg-muted transition-colors {isProfile ? 'font-medium' : ''}">
+                <User size={15} class="text-muted-foreground" />Profil & Pengaturan
+              </a>
+              <div class="border-t my-1"></div>
+              <button on:click={() => { userDropdown = false; logout(); }}
+                class="flex items-center gap-2.5 px-4 py-2.5 text-sm text-destructive hover:bg-destructive/10
+                       transition-colors w-full text-left">
+                <LogOut size={15} />Keluar
+              </button>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Mobile: hamburger -->
+      <button on:click={() => menuOpen = !menuOpen}
+        class="md:hidden p-1.5 rounded-md text-white/70 hover:text-white hover:bg-white/10 transition-colors">
+        {#if menuOpen}<X size={20} />{:else}<Menu size={20} />{/if}
+      </button>
+    </header>
+
+    <!-- Mobile drawer -->
     {#if menuOpen}
-      <div class="md:hidden fixed inset-0 z-40 bg-background/80 backdrop-blur-sm"
-        on:click={() => menuOpen = false}
-        role="presentation">
+      <div class="md:hidden fixed inset-0 z-30 bg-black/40 backdrop-blur-sm top-14"
+        on:click={() => menuOpen = false} role="presentation">
       </div>
       <div class="md:hidden fixed top-14 left-0 bottom-0 z-40 w-64 bg-card border-r p-2 space-y-0.5 overflow-y-auto">
-        <a href="/chat" class={navClass(isChat)} on:click={() => menuOpen = false}>
+        <a href="/chat" class="{mobileBase} {isChat ? mobileActive : mobileIdle}"
+           on:click={() => menuOpen = false}>
           <MessageSquare size={16} /><span>Chat</span>
         </a>
-        <a href="/keys" class={navClass(isKeys)} on:click={() => menuOpen = false}>
+        <a href="/keys" class="{mobileBase} {isKeys ? mobileActive : mobileIdle}"
+           on:click={() => menuOpen = false}>
           <Key size={16} /><span>API Keys</span>
         </a>
-        {#if isAdmin}
-          <a href="/admin" class={navClass(isAdminPage)} on:click={() => menuOpen = false}>
+        {#if isAdminUser}
+          <a href="/admin" class="{mobileBase} {isAdminPage ? mobileActive : mobileIdle}"
+             on:click={() => menuOpen = false}>
             <BarChart3 size={16} /><span>Admin</span>
           </a>
         {/if}
-        <a href="/profile" class={navClass(isProfile)} on:click={() => menuOpen = false}>
+        <a href="/profile" class="{mobileBase} {isProfile ? mobileActive : mobileIdle}"
+           on:click={() => menuOpen = false}>
           <User size={16} /><span>Profil</span>
         </a>
-        <button on:click={logout}
-          class="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-destructive
-                 hover:bg-destructive/10 transition-colors cursor-pointer w-full text-left">
-          <LogOut size={16} /><span>Keluar</span>
-        </button>
+        <div class="border-t my-1 pt-1">
+          <button on:click={() => { menuOpen = false; toggleDark(); }}
+            class="{mobileBase} {mobileIdle} w-full text-left">
+            {#if dark}<Sun size={16} />{:else}<Moon size={16} />{/if}
+            <span>{dark ? 'Light mode' : 'Dark mode'}</span>
+          </button>
+          <button on:click={() => { menuOpen = false; logout(); }}
+            class="{mobileBase} text-destructive hover:bg-destructive/10 w-full text-left">
+            <LogOut size={16} /><span>Keluar</span>
+          </button>
+        </div>
       </div>
     {/if}
-    <main class="flex-1 overflow-hidden mt-14 md:mt-0">
+
+    <!-- Main content -->
+    <main class="flex-1 overflow-hidden">
       <slot />
     </main>
   </div>
