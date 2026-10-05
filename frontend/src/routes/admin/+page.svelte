@@ -53,7 +53,7 @@
 
   // ── Stats ──
   let stats: QueryLogStats | null = null;
-  let statsLoading = true;
+  let statsLoading = false;
   let statsError = '';
 
   // ── Users ──
@@ -109,13 +109,14 @@
   let logsError = '';
 
   // ── Access guard ──
-  onMount(async () => {
-    const unsubscribe = currentUser.subscribe(async u => {
+  onMount(() => {
+    const unsubscribe = currentUser.subscribe(u => {
       if (u === null) { goto('/login'); return; }
       if (u && u.role !== 'admin') { goto('/chat'); return; }
       if (u?.role === 'admin') {
         unsubscribe();
-        await loadStats();
+        // Load stats lazily — hanya saat tab stats aktif (default)
+        loadStats();
       }
     });
   });
@@ -156,6 +157,7 @@
 
   async function switchTab(tab: Tab) {
     activeTab = tab;
+    if (tab === 'stats' && !stats && !statsLoading) loadStats();
     if (tab === 'users') loadUsers();
     if (tab === 'documents') loadDocuments();
     if (tab === 'logs') loadLogs(0);

@@ -48,14 +48,13 @@
   const navBase = 'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/20 hover:text-foreground transition-colors cursor-pointer w-full';
   const navActive = 'bg-accent/20 text-foreground font-medium';
 
-  // Exact match for single-segment paths to avoid /chat matching /chat/...
-  // and "/" matching everything
-  function navClass(path: string) {
-    const pathname = $page.url.pathname;
-    // Exact match for these routes; startsWith for any sub-routes
-    const active = path === '/'
-      ? pathname === '/'
-      : pathname === path || pathname.startsWith(path + '/');
+  // Reactive per-route — dijamin re-evaluate saat $page berubah
+  $: isChat    = $page.url.pathname === '/chat'    || $page.url.pathname.startsWith('/chat/');
+  $: isKeys    = $page.url.pathname === '/keys'    || $page.url.pathname.startsWith('/keys/');
+  $: isAdminPage = $page.url.pathname === '/admin' || $page.url.pathname.startsWith('/admin/');
+  $: isProfile = $page.url.pathname === '/profile' || $page.url.pathname.startsWith('/profile/');
+
+  function navClass(active: boolean) {
     return `${navBase} ${active ? navActive : ''}`;
   }
 </script>
@@ -76,21 +75,21 @@
       </div>
 
       <nav class="flex-1 p-2 space-y-0.5 overflow-y-auto">
-        <a href="/chat" class={navClass('/chat')}>
+        <a href="/chat" class={navClass(isChat)}>
           <MessageSquare size={16} /><span>Chat</span>
         </a>
-        <a href="/keys" class={navClass('/keys')}>
+        <a href="/keys" class={navClass(isKeys)}>
           <Key size={16} /><span>API Keys</span>
         </a>
         {#if isAdmin}
-          <a href="/admin" class={navClass('/admin')}>
+          <a href="/admin" class={navClass(isAdminPage)}>
             <BarChart3 size={16} /><span>Admin</span>
           </a>
         {/if}
       </nav>
 
       <div class="p-2 border-t space-y-0.5">
-        <a href="/profile" class={navClass('/profile')}>
+        <a href="/profile" class={navClass(isProfile)}>
           <User size={16} />
           <span class="truncate">{$currentUser?.display_name || $currentUser?.email || 'Profil'}</span>
         </a>
@@ -132,18 +131,18 @@
         role="presentation">
       </div>
       <div class="md:hidden fixed top-14 left-0 bottom-0 z-40 w-64 bg-card border-r p-2 space-y-0.5 overflow-y-auto">
-        <a href="/chat" class={navClass('/chat')} on:click={() => menuOpen = false}>
+        <a href="/chat" class={navClass(isChat)} on:click={() => menuOpen = false}>
           <MessageSquare size={16} /><span>Chat</span>
         </a>
-        <a href="/keys" class={navClass('/keys')} on:click={() => menuOpen = false}>
+        <a href="/keys" class={navClass(isKeys)} on:click={() => menuOpen = false}>
           <Key size={16} /><span>API Keys</span>
         </a>
         {#if isAdmin}
-          <a href="/admin" class={navClass('/admin')} on:click={() => menuOpen = false}>
+          <a href="/admin" class={navClass(isAdminPage)} on:click={() => menuOpen = false}>
             <BarChart3 size={16} /><span>Admin</span>
           </a>
         {/if}
-        <a href="/profile" class={navClass('/profile')} on:click={() => menuOpen = false}>
+        <a href="/profile" class={navClass(isProfile)} on:click={() => menuOpen = false}>
           <User size={16} /><span>Profil</span>
         </a>
         <button on:click={logout}
