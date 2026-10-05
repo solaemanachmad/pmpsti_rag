@@ -2,10 +2,11 @@
   import { onMount } from 'svelte';
   import { keys } from '$lib/api/client';
   import type { ApiKeyInfo, CreateApiKeyResponse } from '$lib/api/client';
+  import { authReady } from '$lib/stores/auth';
   import { Plus, Trash2, Copy, Check, Key, Loader2, Eye, EyeOff } from 'lucide-svelte';
 
   let apiKeys: ApiKeyInfo[] = [];
-  let loading = true;
+  let loading = false;
   let creating = false;
   let error = '';
 
@@ -19,8 +20,13 @@
   let newlyCreatedKey: CreateApiKeyResponse | null = null;
   let copied = false;
 
-  onMount(async () => {
-    await loadKeys();
+  onMount(() => {
+    // Tunggu auth selesai sebelum fetch (httpOnly cookie harus ada)
+    const unsub = authReady.subscribe(ready => {
+      if (!ready) return;
+      unsub();
+      loadKeys();
+    });
   });
 
   async function loadKeys() {
