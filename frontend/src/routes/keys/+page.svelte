@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { keys } from '$lib/api/client';
   import type { ApiKeyInfo, CreateApiKeyResponse } from '$lib/api/client';
   import { authReady } from '$lib/stores/auth';
@@ -20,14 +19,11 @@
   let newlyCreatedKey: CreateApiKeyResponse | null = null;
   let copied = false;
 
-  onMount(() => {
-    // Tunggu auth selesai sebelum fetch (httpOnly cookie harus ada)
-    const unsub = authReady.subscribe(ready => {
-      if (!ready) return;
-      unsub();
-      loadKeys();
-    });
-  });
+  let _loaded = false;
+  $: if ($authReady && !_loaded) {
+    _loaded = true;
+    loadKeys();
+  }
 
   async function loadKeys() {
     loading = true;
