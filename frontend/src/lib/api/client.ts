@@ -134,6 +134,11 @@ export const admin = {
       `/admin/documents/${encodeURIComponent(document_id)}`,
       { method: 'DELETE' }
     ),
+  updateDocument: (document_id: string, payload: { title: string; category: string; subcategory: string }) =>
+    request<{ updated_chunks: number }>(
+      `/admin/documents/${encodeURIComponent(document_id)}`,
+      { method: 'PATCH', body: JSON.stringify(payload) }
+    ),
 
   // Document ingest
   ingestUrl: (payload: { url: string; title?: string; category?: string; subcategory?: string }) =>
@@ -310,11 +315,11 @@ export interface AdminSession {
   updated_at: string;
 }
 export interface AdminDocument {
-  id: string;
   document_id: string;
   title: string;
   document_type: string;
   category: string;
+  subcategory: string;
   source_url: string;
   chunk_count: number;
 }

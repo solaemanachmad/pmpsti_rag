@@ -1305,6 +1305,7 @@ pub struct AdminDocument {
     pub title:         String,
     pub document_type: String,
     pub category:      String,
+    pub subcategory:   String,
     pub source_url:    String,
     pub chunk_count:   i64,
 }
@@ -1454,6 +1455,7 @@ impl Database {
                     COALESCE(MIN(title),'') as title,
                     COALESCE(MIN(document_type),'') as document_type,
                     COALESCE(MIN(category),'') as category,
+                    COALESCE(MIN(subcategory),'') as subcategory,
                     COALESCE(MIN(source_url),'') as source_url,
                     COUNT(*) as chunk_count
              FROM documents
@@ -1469,6 +1471,7 @@ impl Database {
             title:         r.get("title"),
             document_type: r.get("document_type"),
             category:      r.get("category"),
+            subcategory:   r.get("subcategory"),
             source_url:    r.get("source_url"),
             chunk_count:   r.get("chunk_count"),
         }).collect())
@@ -1480,6 +1483,27 @@ impl Database {
             .execute(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
+    pub async fn admin_update_document(
+        &self,
+        document_id: &str,
+        title: &str,
+        category: &str,
+        subcategory: &str,
+    ) -> Result<u64, String> {
+        let res = sqlx::query(
+            "UPDATE documents SET title = $1, category = $2, subcategory = $3
+             WHERE document_id = $4"
+        )
+        .bind(title)
+        .bind(category)
+        .bind(subcategory)
+        .bind(document_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 

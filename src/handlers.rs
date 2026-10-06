@@ -1058,6 +1058,32 @@ pub async fn admin_delete_document(
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct UpdateDocumentBody {
+    pub title:       String,
+    pub category:    String,
+    pub subcategory: String,
+}
+
+pub async fn admin_update_document(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<String>,
+    body:  web::Json<UpdateDocumentBody>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    let doc_id = path.into_inner();
+    match state.db.admin_update_document(&doc_id, &body.title, &body.category, &body.subcategory).await {
+        Ok(n)  => HttpResponse::Ok().json(ApiSuccess::new(
+            serde_json::json!({ "updated_chunks": n })
+        )),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
 /// Bersihkan judul sumber referensi untuk tampilan di frontend.
 /// Prioritaskan subcategory (misal "1.2 Latar Belakang") daripada path title
 /// (misal "chapter1/introduction"). Jika subcategory kosong, ambil bagian terakhir
