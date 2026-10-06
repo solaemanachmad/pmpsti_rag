@@ -1097,6 +1097,63 @@ fn clean_source_title(title: &str, subcategory: &str) -> String {
 }
 
 
+
+// ── Admin: chunk-level operations ─────────────────────────────────────────────
+
+pub async fn admin_list_chunks(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<String>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    match state.db.admin_list_chunks(&path.into_inner()).await {
+        Ok(chunks) => HttpResponse::Ok().json(ApiSuccess::new(chunks)),
+        Err(e)     => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+pub async fn admin_delete_chunk(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<i32>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    match state.db.admin_delete_chunk(path.into_inner()).await {
+        Ok(n)  => HttpResponse::Ok().json(ApiSuccess::new(serde_json::json!({ "deleted": n }))),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateChunkBody {
+    pub content: String,
+}
+
+pub async fn admin_update_chunk(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<i32>,
+    body:  web::Json<UpdateChunkBody>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    if body.content.trim().is_empty() {
+        return HttpResponse::BadRequest().json(ApiError::new(400, "Konten tidak boleh kosong"));
+    }
+    match state.db.admin_update_chunk(path.into_inner(), &body.content).await {
+        Ok(()) => HttpResponse::Ok().json(ApiSuccess::new(serde_json::json!({ "updated": true }))),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
 // ── Admin: query logs ──────────────────────────────────────────────
 pub async fn admin_query_logs(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
     let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };

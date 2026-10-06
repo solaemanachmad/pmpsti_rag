@@ -1482,6 +1482,53 @@ impl Database {
             .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
+
+    // ── Chunk-level operations ────────────────────────────────────────────────
+
+    pub async fn admin_list_chunks(&self, document_id: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows = sqlx::query(
+            "SELECT id, chunk_index, content, title, category, subcategory, source_url, created_at::text
+             FROM documents WHERE document_id = $1 ORDER BY chunk_index ASC"
+        )
+        .bind(document_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let chunks = rows.iter().map(|r| serde_json::json!({
+            "id":          r.get::<i32, _>("id"),
+            "chunk_index": r.get::<Option<i32>, _>("chunk_index").unwrap_or(0),
+            "content":     r.get::<Option<String>, _>("content").unwrap_or_default(),
+            "title":       r.get::<Option<String>, _>("title").unwrap_or_default(),
+            "category":    r.get::<Option<String>, _>("category").unwrap_or_default(),
+            "subcategory": r.get::<Option<String>, _>("subcategory").unwrap_or_default(),
+            "source_url":  r.get::<Option<String>, _>("source_url").unwrap_or_default(),
+            "created_at":  r.get::<Option<String>, _>("created_at").unwrap_or_default(),
+        })).collect();
+        Ok(chunks)
+    }
+
+    pub async fn admin_delete_chunk(&self, chunk_id: i32) -> Result<u64, String> {
+        let res = sqlx::query("DELETE FROM documents WHERE id = $1")
+            .bind(chunk_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
+    pub async fn admin_update_chunk(&self, chunk_id: i32, content: &str) -> Result<(), String> {
+        sqlx::query(
+            "UPDATE documents SET content = $1, updated_at = NOW() WHERE id = $2"
+        )
+        .bind(content)
+        .bind(chunk_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ════════════════════════════════════════════════════════════
     //  GUEST QUOTA — public chat tanpa auth (maks 5 pertanyaan)
     // ════════════════════════════════════════════════════════════

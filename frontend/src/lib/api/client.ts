@@ -142,6 +142,17 @@ export const admin = {
       { method: 'POST', body: JSON.stringify(payload) }
     ),
 
+  // Chunk operations
+  listChunks: (document_id: string) =>
+    request<AdminChunk[]>(`/admin/documents/${encodeURIComponent(document_id)}/chunks`),
+  deleteChunk: (chunk_id: number) =>
+    request<{ deleted: number }>(`/admin/chunks/${chunk_id}`, { method: 'DELETE' }),
+  updateChunk: (chunk_id: number, content: string) =>
+    request<{ updated: boolean }>(`/admin/chunks/${chunk_id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content })
+    }),
+
   // Query logs
   queryLogs: (limit = 50, offset = 0) =>
     request<{ logs: AdminQueryLog[]; total: number }>(`/admin/logs?limit=${limit}&offset=${offset}`)
@@ -311,6 +322,17 @@ export interface IngestResponse {
   document_id: string;
   chunks: number;
   title: string;
+}
+
+export interface AdminChunk {
+  id: number;
+  chunk_index: number;
+  content: string;
+  title: string;
+  category: string;
+  subcategory: string;
+  source_url: string;
+  created_at: string;
 }
 
 export interface AdminQueryLog {
