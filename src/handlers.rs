@@ -84,6 +84,170 @@ async fn embed_with_retry(
     Err("Embed failed after max retries".to_string())
 }
 
+// ── Semantic Chunking ───────────────────────────────────────────────────────
+/// Split `text` menjadi chunk-chunk yang semantically coherent.
+///
+/// Algoritma:
+/// 1. Split teks menjadi kalimat/baris
+/// 2. Embed tiap kalimat via Gemini
+/// 3. Hitung cosine similarity antar kalimat berurutan
+/// 4. Split saat similarity < threshold (default 0.75)
+/// 5. Guard: merge chunk < min_chars, force-split chunk > max_chars
+///
+/// Returns list of chunk strings, atau error.
+async fn semantic_chunk(
+    http:        &reqwest::Client,
+    embed_url:   &str,
+    gemini_key:  &str,
+    text:        &str,
+    threshold:   f32,   // similarity threshold untuk split (0.0–1.0)
+    min_chars:   usize, // chunk terlalu kecil → merge ke sebelumnya
+    max_chars:   usize, // chunk terlalu besar → force split di tengah
+) -> Result<Vec<String>, String> {
+    // ── 1. Split jadi kalimat ───────────────────────────────────────
+    // Split di ". ", ".\n", "\n\n", atau "\n" (untuk baris tabel)
+    let sentences: Vec<String> = split_sentences(text);
+    if sentences.is_empty() {
+        return Ok(vec![text.to_string()]);
+    }
+    // Dokumen sangat pendek → langsung 1 chunk
+    if sentences.len() <= 2 || text.len() < min_chars * 2 {
+        return Ok(vec![text.to_string()]);
+    }
+
+    // ── 2. Embed tiap kalimat ────────────────────────────────────────
+    let mut sent_embeddings: Vec<Vec<f32>> = Vec::with_capacity(sentences.len());
+    for sentence in &sentences {
+        let emb = embed_with_retry(http, embed_url, gemini_key, sentence).await?;
+        sent_embeddings.push(emb);
+    }
+
+    // ── 3. Hitung cosine similarity antar kalimat berurutan ──────────
+    let mut similarities: Vec<f32> = Vec::with_capacity(sentences.len().saturating_sub(1));
+    for i in 0..sent_embeddings.len().saturating_sub(1) {
+        let sim = cosine_similarity(&sent_embeddings[i], &sent_embeddings[i + 1]);
+        similarities.push(sim);
+    }
+
+    // ── 4. Split saat similarity drop ───────────────────────────────
+    let mut segments: Vec<Vec<String>> = Vec::new();
+    let mut current: Vec<String> = vec![sentences[0].clone()];
+
+    for (i, sim) in similarities.iter().enumerate() {
+        if *sim < threshold {
+            // similarity drop → mulai segment baru
+            segments.push(current.clone());
+            current = vec![sentences[i + 1].clone()];
+        } else {
+            current.push(sentences[i + 1].clone());
+        }
+    }
+    if !current.is_empty() {
+        segments.push(current);
+    }
+
+    // ── 5. Guard: merge terlalu kecil, split terlalu besar ──────────
+    let mut chunks: Vec<String> = Vec::new();
+    let mut pending = String::new();
+
+    for seg in segments {
+        let seg_text = seg.join(" ");
+        pending.push_str(if pending.is_empty() { "" } else { " " });
+        pending.push_str(&seg_text);
+
+        if pending.len() >= min_chars {
+            // Force-split kalau pending terlalu besar
+            if pending.len() > max_chars {
+                let chars: Vec<char> = pending.chars().collect();
+                let mut start = 0;
+                while start < chars.len() {
+                    let end = (start + max_chars).min(chars.len());
+                    chunks.push(chars[start..end].iter().collect());
+                    if end >= chars.len() { break; }
+                    start += max_chars;
+                }
+            } else {
+                chunks.push(pending.clone());
+            }
+            pending = String::new();
+        }
+    }
+    // Sisa pending → gabung ke chunk terakhir atau buat baru
+    if !pending.is_empty() {
+        if let Some(last) = chunks.last_mut() {
+            if last.len() + pending.len() <= max_chars {
+                last.push(' ');
+                last.push_str(&pending);
+            } else {
+                chunks.push(pending);
+            }
+        } else {
+            chunks.push(pending);
+        }
+    }
+
+    if chunks.is_empty() {
+        return Ok(vec![text.to_string()]);
+    }
+    Ok(chunks)
+}
+
+/// Split teks menjadi kalimat-kalimat.
+/// Menangani: ". ", ".\n", "\n\n" (paragraf), "\n" (baris tabel).
+fn split_sentences(text: &str) -> Vec<String> {
+    let mut sentences: Vec<String> = Vec::new();
+
+    // Deteksi teks tabel: banyak baris pendek (< 200 char rata-rata)
+    let lines: Vec<&str> = text.lines().collect();
+    let avg_line_len = if lines.is_empty() { 0 }
+        else { lines.iter().map(|l| l.len()).sum::<usize>() / lines.len() };
+
+    if avg_line_len < 150 && lines.len() > 3 {
+        // Mode tabel: tiap baris = satu "kalimat"
+        for line in lines {
+            let s = line.trim().to_string();
+            if !s.is_empty() { sentences.push(s); }
+        }
+        return sentences;
+    }
+
+    // Mode naratif: split di ". ", "! ", "? ", atau "\n\n"
+    let mut current = String::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        current.push(c);
+
+        let is_sentence_end = matches!(c, '.' | '!' | '?')
+            && i + 1 < chars.len()
+            && (chars[i + 1] == ' ' || chars[i + 1] == '\n');
+
+        let is_para_break = c == '\n'
+            && i + 1 < chars.len()
+            && chars[i + 1] == '\n';
+
+        if (is_sentence_end || is_para_break) && current.trim().len() > 20 {
+            sentences.push(current.trim().to_string());
+            current = String::new();
+            if is_para_break { i += 1; } // skip extra newline
+        }
+        i += 1;
+    }
+    if !current.trim().is_empty() {
+        sentences.push(current.trim().to_string());
+    }
+    sentences
+}
+
+/// Cosine similarity antara dua vektor f32.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 { return 0.0; }
+    dot / (norm_a * norm_b)
+}
 
 // ── Rate limiter state: IP -> (fail_count, window_start) ──
 #[derive(Clone)]
@@ -1470,27 +1634,24 @@ pub async fn admin_ingest_url(
             .json(ApiError::new(422, "Konten terlalu pendek atau tidak bisa di-parse"));
     }
 
-    // 3. Chunk teks (setiap ~800 karakter, overlap ~100)
-    let chunk_size = 800usize;
-    let overlap    = 100usize;
-    let chars: Vec<char> = raw_text.chars().collect();
-    let mut chunks_text: Vec<String> = Vec::new();
-    let mut start = 0usize;
-    while start < chars.len() {
-        let end = (start + chunk_size).min(chars.len());
-        chunks_text.push(chars[start..end].iter().collect());
-        if end >= chars.len() { break; }
-        start += chunk_size.saturating_sub(overlap);
-    }
-
-    // 4. Embed setiap chunk via Gemini
+    // 3. Semantic chunking via Gemini embeddings
     let gemini_key = match std::env::var("GEMINI_API_KEY") {
         Ok(k) => k,
         Err(_) => return HttpResponse::InternalServerError()
             .json(ApiError::new(500, "GEMINI_API_KEY tidak dikonfigurasi")),
     };
-
     let embed_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
+
+    let chunks_text = match semantic_chunk(
+        &http, embed_url, &gemini_key, &raw_text,
+        0.75,  // similarity threshold
+        150,   // min chunk size (chars)
+        1200,  // max chunk size (chars)
+    ).await {
+        Ok(c)  => c,
+        Err(e) => return HttpResponse::BadGateway()
+            .json(ApiError::new(502, format!("Semantic chunk error: {e}"))),
+    };
 
     let category    = body.category.clone().unwrap_or_else(|| "Umum".to_string());
     let subcategory = body.subcategory.clone().unwrap_or_else(|| "—".to_string());
@@ -1551,26 +1712,24 @@ pub async fn admin_ingest_text(
         .timeout(std::time::Duration::from_secs(30))
         .build().unwrap();
 
-    // Chunk
-    let chunk_size = 800usize;
-    let overlap    = 100usize;
-    let chars: Vec<char> = raw_text.chars().collect();
-    let mut chunks_text: Vec<String> = Vec::new();
-    let mut start = 0usize;
-    while start < chars.len() {
-        let end = (start + chunk_size).min(chars.len());
-        chunks_text.push(chars[start..end].iter().collect());
-        if end >= chars.len() { break; }
-        start += chunk_size.saturating_sub(overlap);
-    }
-
     let gemini_key = match std::env::var("GEMINI_API_KEY") {
         Ok(k) => k,
         Err(_) => return HttpResponse::InternalServerError()
             .json(ApiError::new(500, "GEMINI_API_KEY tidak dikonfigurasi")),
     };
+    let embed_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
 
-    let embed_url  = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
+    // Semantic chunking via Gemini embeddings
+    let chunks_text = match semantic_chunk(
+        &http, embed_url, &gemini_key, &raw_text,
+        0.75,  // similarity threshold
+        150,   // min chunk size (chars)
+        1200,  // max chunk size (chars)
+    ).await {
+        Ok(c)  => c,
+        Err(e) => return HttpResponse::BadGateway()
+            .json(ApiError::new(502, format!("Semantic chunk error: {e}"))),
+    };
     let title      = body.title.clone();
     let source_url = body.source_url.clone().unwrap_or_else(|| "manual".to_string());
     let category   = body.category.clone().unwrap_or_else(|| "Umum".to_string());
