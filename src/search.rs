@@ -120,23 +120,36 @@ impl SearchEngine {
         results
             .iter()
             .enumerate()
-            .map(|(i, r)| {
-                let location = match r.page_number {
-                    Some(p) => format!("hal. {}", p),
-                    None    => "—".to_string(),
-                };
-                format!(
-                    "[{}] {} ({})\nKategori: {} / {}\nSumber: {}\n\n{}",
-                    i + 1,
-                    r.title,
-                    location,
-                    r.category,
-                    r.subcategory,
-                    r.source_url,
-                    r.content,
-                )
-            })
+            .map(|(i, r)| Self::format_one(i, r))
             .collect::<Vec<_>>()
             .join("\n\n---\n\n")
+    }
+
+    /// Sama seperti format_context, tapi menerima slice of references
+    /// (dipakai oleh answer_with_chunks setelah filter_sources).
+    pub fn format_context_refs(results: &[&SearchResult]) -> String {
+        results
+            .iter()
+            .enumerate()
+            .map(|(i, r)| Self::format_one(i, r))
+            .collect::<Vec<_>>()
+            .join("\n\n---\n\n")
+    }
+
+    fn format_one(i: usize, r: &SearchResult) -> String {
+        let location = match r.page_number {
+            Some(p) => format!("hal. {}", p),
+            None    => "—".to_string(),
+        };
+        format!(
+            "[{}] {} ({})\nKategori: {} / {}\nSumber: {}\n\n{}",
+            i + 1,
+            r.title,
+            location,
+            r.category,
+            r.subcategory,
+            r.source_url,
+            r.content,
+        )
     }
 }

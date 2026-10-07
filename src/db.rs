@@ -1218,7 +1218,7 @@ fn rows_to_results(rows: Vec<sqlx::postgres::PgRow>) -> Vec<SearchResult> {
                 source_url:  row.get("source_url"),
                 page_number: row.try_get("page_number").ok().flatten(),
                 chunk_index: row.try_get("chunk_index").ok().flatten(),
-                score:       row.get("score"),
+                score:       row.try_get("score").unwrap_or(0.0),
             }
         })
         .collect()
@@ -1244,6 +1244,7 @@ fn row_to_user(row: &sqlx::postgres::PgRow) -> User {
 /// Jika konten terdeteksi sebagai JS/CSS (bukan teks natural), kembalikan string kosong.
 fn clean_snippet(text: &str) -> String {
     let trimmed = text.trim();
+    // Deteksi pola JS/CSS yang khas dari Quarto/Bootstrap
     let js_indicators = [
         "const ", "function ", "var ", "let ", "=>", "document.querySelector",
         "window.", "classList.", "getAttribute(", "getElementById",
@@ -1252,7 +1253,7 @@ fn clean_snippet(text: &str) -> String {
     let first_200: String = trimmed.chars().take(200).collect();
     let is_js = js_indicators.iter().any(|pat| first_200.contains(pat));
     if is_js {
-        return String::new();
+        return String::new(); // kosongkan — jangan tampilkan JS ke user
     }
     trimmed.to_string()
 }
@@ -1530,36 +1531,6 @@ impl Database {
         Ok(res.rows_affected())
     }
 
-    // ── Document expansion: fetch all chunks for a set of document_ids ─────────
-
-    pub async fn fetch_all_chunks_for_documents(
-        &self,
-        document_ids: &[String],
-    ) -> Result<Vec<SearchResult>, sqlx::Error> {
-        if document_ids.is_empty() {
-            return Ok(vec![]);
-        }
-        // Build $1, $2, $3, ... placeholders
-        let placeholders: Vec<String> = (1..=document_ids.len())
-            .map(|i| format!("${}", i))
-            .collect();
-        let sql = format!(
-            "SELECT document_id, title, content, category, subcategory,
-                    COALESCE(source_url, '') AS source_url,
-                    page_number, chunk_index, 1.0::float8 AS score
-             FROM documents
-             WHERE document_id = ANY(ARRAY[{}]::text[])
-             ORDER BY document_id, chunk_index",
-            placeholders.join(", ")
-        );
-        let mut q = sqlx::query(&sql);
-        for id in document_ids {
-            q = q.bind(id);
-        }
-        let rows = q.fetch_all(&self.pool).await?;
-        Ok(rows_to_results(rows))
-    }
-
     // ── Chunk-level operations ────────────────────────────────────────────────
 
     pub async fn admin_list_chunks(&self, document_id: &str) -> Result<Vec<serde_json::Value>, String> {
@@ -1583,6 +1554,29 @@ impl Database {
             "created_at":  r.get::<Option<String>, _>("created_at").unwrap_or_default(),
         })).collect();
         Ok(chunks)
+    }
+
+    // Fetch ALL chunks for a list of document_ids (for document expansion in RAG)
+    pub async fn fetch_all_chunks_for_documents(
+        &self,
+        document_ids: &[String],
+    ) -> Result<Vec<SearchResult>, sqlx::Error> {
+        if document_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let rows = sqlx::query(
+            "SELECT document_id, title, content, category, subcategory,
+                    COALESCE(source_url, '') AS source_url,
+                    page_number, chunk_index, 1.0::float8 AS score
+             FROM documents
+             WHERE document_id = ANY($1::text[])
+             ORDER BY document_id, chunk_index"
+        )
+        .bind(document_ids)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows_to_results(rows))
     }
 
     pub async fn admin_delete_chunk(&self, chunk_id: i32) -> Result<u64, String> {
