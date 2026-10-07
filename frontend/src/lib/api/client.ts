@@ -149,7 +149,7 @@ export const admin = {
 
   // Chunk operations
   listChunks: (document_id: string) =>
-    request<AdminChunk[]>(`/admin/documents/${encodeURIComponent(document_id)}/chunks`),
+    request<AdminChunk[]>(`/admin/chunks?document_id=${encodeURIComponent(document_id)}`),
   deleteChunk: (chunk_id: number) =>
     request<{ deleted: number }>(`/admin/chunks/${chunk_id}`, { method: 'DELETE' }),
   updateChunk: (chunk_id: number, content: string) =>

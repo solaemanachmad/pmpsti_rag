@@ -1126,16 +1126,21 @@ fn clean_source_title(title: &str, subcategory: &str) -> String {
 
 // ── Admin: chunk-level operations ─────────────────────────────────────────────
 
+#[derive(serde::Deserialize)]
+pub struct ListChunksQuery {
+    pub document_id: String,
+}
+
 pub async fn admin_list_chunks(
     req:   HttpRequest,
     state: web::Data<AppState>,
-    path:  web::Path<String>,
+    query: web::Query<ListChunksQuery>,
 ) -> HttpResponse {
     let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
     if claims.role != "admin" {
         return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
     }
-    match state.db.admin_list_chunks(&path.into_inner()).await {
+    match state.db.admin_list_chunks(&query.document_id).await {
         Ok(chunks) => HttpResponse::Ok().json(ApiSuccess::new(chunks)),
         Err(e)     => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
     }
