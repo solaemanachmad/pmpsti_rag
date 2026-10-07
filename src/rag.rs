@@ -187,6 +187,8 @@ impl RagEngine {
             "sebutkan", "semua", "daftar", "list", "berapa jumlah",
             "berapa banyak", "seluruh", "lengkap", "mitra", "semua mitra",
             "apa saja", "siapa saja",
+            // variasi tanpa "berapa" di depan
+            "jumlah", "total", "kerjasama",
         ];
         if list_patterns.iter().any(|p| q.contains(p)) {
             return QueryType::List;
