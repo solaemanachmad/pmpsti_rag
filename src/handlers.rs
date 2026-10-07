@@ -3,6 +3,7 @@ use chrono::Utc;
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::auth::{extract_bearer, generate_api_key, hash_password, sign_jwt, verify_jwt, verify_password};
@@ -10,6 +11,78 @@ use crate::db::{ChatMessage, ChatSession, ChatSource, Database, DocumentChunk};
 use crate::email::{send_verification_email, send_password_reset_email, send_welcome_email};
 use crate::models::*;
 use crate::rag::RagEngine;
+
+// ── Gemini Embed helper with retry ─────────────────────────────────────────
+/// Embed `text` using Gemini text-embedding-004 with exponential backoff retry.
+/// Retries up to 3 times on 429/503 (rate-limit / overload).
+/// Returns the 768-dim embedding or an error string.
+async fn embed_with_retry(
+    http:       &reqwest::Client,
+    embed_url:  &str,
+    gemini_key: &str,
+    text:       &str,
+) -> Result<Vec<f32>, String> {
+    #[derive(serde::Serialize)]
+    struct EmbedReq { content: EmbedContent, #[serde(rename="outputDimensionality")] output_dimensionality: u32 }
+    #[derive(serde::Serialize)]
+    struct EmbedContent { parts: Vec<EmbedPart> }
+    #[derive(serde::Serialize)]
+    struct EmbedPart { text: String }
+    #[derive(serde::Deserialize)]
+    struct EmbedResp { embedding: EmbedVals }
+    #[derive(serde::Deserialize)]
+    struct EmbedVals { values: Vec<f32> }
+
+    let body = EmbedReq {
+        content: EmbedContent { parts: vec![EmbedPart { text: text.to_string() }] },
+        output_dimensionality: 768,
+    };
+
+    let max_retries = 3u32;
+    for attempt in 0..=max_retries {
+        let resp = match http.post(embed_url)
+            .header("x-goog-api-key", gemini_key)
+            .json(&body)
+            .send().await
+        {
+            Ok(r)  => r,
+            Err(e) => {
+                if attempt < max_retries {
+                    let delay = std::time::Duration::from_millis(1000 * (1 << attempt));
+                    sleep(delay).await;
+                    continue;
+                }
+                return Err(format!("Network error: {e}"));
+            }
+        };
+
+        let status = resp.status();
+
+        // Retry-able transient errors
+        if status.as_u16() == 429 || status.as_u16() == 503 {
+            if attempt < max_retries {
+                let delay = std::time::Duration::from_millis(2000 * (1 << attempt));
+                eprintln!("[embed_retry] Gemini embed {status}, retry {}/{max_retries} after {}ms", attempt+1, delay.as_millis());
+                sleep(delay).await;
+                continue;
+            }
+            let msg = resp.text().await.unwrap_or_default();
+            return Err(format!("Gemini embed {}: {msg}", status.as_u16()));
+        }
+
+        if !status.is_success() {
+            let msg = resp.text().await.unwrap_or_default();
+            return Err(format!("Gemini embed {}: {msg}", status.as_u16()));
+        }
+
+        return match resp.json::<EmbedResp>().await {
+            Ok(d)  => Ok(d.embedding.values),
+            Err(e) => Err(format!("Parse embed response: {e}")),
+        };
+    }
+
+    Err("Embed failed after max retries".to_string())
+}
 
 
 // ── Rate limiter state: IP -> (fail_count, window_start) ──
@@ -1426,43 +1499,10 @@ pub async fn admin_ingest_url(
     let mut doc_chunks: Vec<DocumentChunk> = Vec::new();
 
     for (i, chunk_text) in chunks_text.iter().enumerate() {
-        #[derive(serde::Serialize)]
-        struct EmbedReq { content: EmbedContent, #[serde(rename="outputDimensionality")] output_dimensionality: u32 }
-        #[derive(serde::Serialize)]
-        struct EmbedContent { parts: Vec<EmbedPart> }
-        #[derive(serde::Serialize)]
-        struct EmbedPart { text: String }
-        #[derive(serde::Deserialize)]
-        struct EmbedResp { embedding: EmbedVals }
-        #[derive(serde::Deserialize)]
-        struct EmbedVals { values: Vec<f32> }
-
-        let embed_body = EmbedReq {
-            content: EmbedContent { parts: vec![EmbedPart { text: chunk_text.clone() }] },
-            output_dimensionality: 768,
-        };
-
-        let resp = match http.post(embed_url)
-            .header("x-goog-api-key", &gemini_key)
-            .json(&embed_body)
-            .send().await
-        {
-            Ok(r) => r,
+        let embedding = match embed_with_retry(&http, embed_url, &gemini_key, chunk_text).await {
+            Ok(v)  => v,
             Err(e) => return HttpResponse::BadGateway()
-                .json(ApiError::new(502, format!("Embed error chunk {i}: {e}"))),
-        };
-
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body   = resp.text().await.unwrap_or_default();
-            return HttpResponse::BadGateway()
-                .json(ApiError::new(502, format!("Gemini embed {status}: {body}")));
-        }
-
-        let embed_data: EmbedVals = match resp.json::<EmbedResp>().await {
-            Ok(d) => d.embedding,
-            Err(e) => return HttpResponse::InternalServerError()
-                .json(ApiError::new(500, format!("Parse embed response: {e}"))),
+                .json(ApiError::new(502, format!("Embed chunk {i}: {e}"))),
         };
 
         doc_chunks.push(DocumentChunk {
@@ -1474,7 +1514,7 @@ pub async fn admin_ingest_url(
             subcategory:   subcategory.clone(),
             document_type: "url".to_string(),
             chunk_index:   i as i32,
-            embedding:     embed_data.values,
+            embedding,
         });
     }
 
@@ -1540,43 +1580,10 @@ pub async fn admin_ingest_text(
     let mut doc_chunks: Vec<DocumentChunk> = Vec::new();
 
     for (i, chunk_text) in chunks_text.iter().enumerate() {
-        #[derive(serde::Serialize)]
-        struct EmbedReq { content: EmbedContent, #[serde(rename="outputDimensionality")] output_dimensionality: u32 }
-        #[derive(serde::Serialize)]
-        struct EmbedContent { parts: Vec<EmbedPart> }
-        #[derive(serde::Serialize)]
-        struct EmbedPart { text: String }
-        #[derive(serde::Deserialize)]
-        struct EmbedResp { embedding: EmbedVals }
-        #[derive(serde::Deserialize)]
-        struct EmbedVals { values: Vec<f32> }
-
-        let embed_body = EmbedReq {
-            content: EmbedContent { parts: vec![EmbedPart { text: chunk_text.clone() }] },
-            output_dimensionality: 768,
-        };
-
-        let resp = match http.post(embed_url)
-            .header("x-goog-api-key", &gemini_key)
-            .json(&embed_body)
-            .send().await
-        {
-            Ok(r) => r,
+        let embedding = match embed_with_retry(&http, embed_url, &gemini_key, chunk_text).await {
+            Ok(v)  => v,
             Err(e) => return HttpResponse::BadGateway()
-                .json(ApiError::new(502, format!("Embed error chunk {i}: {e}"))),
-        };
-
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let msg    = resp.text().await.unwrap_or_default();
-            return HttpResponse::BadGateway()
-                .json(ApiError::new(502, format!("Gemini embed {status}: {msg}")));
-        }
-
-        let embed_data: EmbedVals = match resp.json::<EmbedResp>().await {
-            Ok(d) => d.embedding,
-            Err(e) => return HttpResponse::InternalServerError()
-                .json(ApiError::new(500, format!("Parse embed: {e}"))),
+                .json(ApiError::new(502, format!("Embed chunk {i}: {e}"))),
         };
 
         doc_chunks.push(DocumentChunk {
@@ -1588,7 +1595,7 @@ pub async fn admin_ingest_text(
             subcategory:   subcategory.clone(),
             document_type: "text".to_string(),
             chunk_index:   i as i32,
-            embedding:     embed_data.values,
+            embedding,
         });
     }
 
