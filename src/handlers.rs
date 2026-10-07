@@ -1541,14 +1541,25 @@ async fn fetch_html_with_js(url: &str) -> Result<String, String> {
     // 2. Deteksi apakah halaman perlu JS render:
     //    - Ada DataTables / pakai script untuk load data tabel
     //    - tbody kosong (< 200 karakter antara <tbody dan </tbody>)
+    //    - WordPress dengan konten dosen/pegawai (sering JS-rendered)
+    //    - wp-json / REST API WordPress
+    let lower_html = html.to_lowercase();
     let needs_js = html.contains("DataTable")
         || html.contains("datatables")
         || html.contains("data-src=")
+        // WordPress detection
+        || lower_html.contains("wp-content")
+        || lower_html.contains("wp-json")
+        || lower_html.contains("wp-includes")
+        || lower_html.contains("wordpress")
+        // Lazy-load / AJAX data patterns
+        || lower_html.contains("ajax_url")
+        || lower_html.contains("data-ajax")
+        || lower_html.contains("data-url=")
         || {
             // Cek tbody kosong
-            let lower = html.to_lowercase();
-            if let Some(start) = lower.find("<tbody") {
-                if let Some(end) = lower[start..].find("</tbody>") {
+            if let Some(start) = lower_html.find("<tbody") {
+                if let Some(end) = lower_html[start..].find("</tbody>") {
                     let inner = &html[start..start+end];
                     inner.trim().len() < 300
                 } else { false }
@@ -1645,27 +1656,149 @@ pub async fn admin_ingest_url(
         .unwrap_or_else(|| if page_title.is_empty() { url.clone() } else { page_title });
 
     // Hapus tag script, style, nav, footer, header
-    let remove_sel = scraper::Selector::parse("script,style,nav,footer,header,aside,noscript").unwrap();
-    let body_sel   = scraper::Selector::parse("main, article, .content, body").unwrap();
+    let remove_sel   = scraper::Selector::parse("script,style,nav,footer,header,aside,noscript").unwrap();
+    let body_sel     = scraper::Selector::parse("main, article, .content, #content, .entry-content, body").unwrap();
+    let json_sel     = scraper::Selector::parse("script[type='application/json']").unwrap();
+    let table_sel    = scraper::Selector::parse("table").unwrap();
+    let tr_sel       = scraper::Selector::parse("tr").unwrap();
+    let td_sel       = scraper::Selector::parse("td, th").unwrap();
+
+    // Ekstrak DataTables JSON widget — biasanya <script type="application/json"> berisi
+    // {"data": [[col1, col2, ...], ...]} atau {"columns": [...], "rows": [...]}
+    let datatables_text: String = {
+        let mut out = Vec::new();
+        for script_el in document.select(&json_sel) {
+            let raw = script_el.text().collect::<String>();
+            // Coba parse sebagai JSON
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                // Format: {"data": [[...], ...]}
+                if let Some(rows) = v.get("data").and_then(|d| d.as_array()) {
+                    // Ambil kolom dari "columns" jika ada
+                    let headers: Vec<String> = v.get("columns")
+                        .and_then(|c| c.as_array())
+                        .map(|cols| cols.iter().filter_map(|c| {
+                            c.get("title").or(c.get("data"))
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        }).collect())
+                        .unwrap_or_default();
+
+                    for row in rows {
+                        if let Some(cells) = row.as_array() {
+                            let row_text: Vec<String> = cells.iter()
+                                .map(|c| match c {
+                                    serde_json::Value::String(s) => {
+                                        // Strip HTML tags dari cell value
+                                        let doc2 = scraper::Html::parse_fragment(s);
+                                        doc2.root_element().text().collect::<String>().trim().to_string()
+                                    }
+                                    serde_json::Value::Number(n) => n.to_string(),
+                                    serde_json::Value::Bool(b) => b.to_string(),
+                                    _ => String::new(),
+                                })
+                                .filter(|s| !s.is_empty())
+                                .collect();
+
+                            if !row_text.is_empty() {
+                                if !headers.is_empty() && headers.len() == row_text.len() {
+                                    // "Nama: Prof. Ir. P. Insap Santosa | NIP: 196101081985031002 | ..."
+                                    let paired: Vec<String> = headers.iter().zip(row_text.iter())
+                                        .filter(|(_, v)| !v.is_empty())
+                                        .map(|(h, v)| format!("{}: {}", h, v))
+                                        .collect();
+                                    out.push(paired.join(" | "));
+                                } else {
+                                    out.push(row_text.join(" | "));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out.join("\n")
+    };
+
+    // Ekstrak tabel HTML biasa (<table><tr><td>)
+    let html_table_text: String = {
+        let mut out = Vec::new();
+        for table_el in document.select(&table_sel) {
+            for tr_el in table_el.select(&tr_sel) {
+                let cells: Vec<String> = tr_el.select(&td_sel)
+                    .map(|td| td.text().collect::<String>().trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !cells.is_empty() {
+                    out.push(cells.join(" | "));
+                }
+            }
+        }
+        out.join("\n")
+    };
 
     let raw_text: String = {
-        // Coba ambil dari main/article dulu, fallback ke body
-        // Join dengan "\n" bukan " " agar struktur baris/tabel tetap terjaga
-        // untuk semantic chunker (penting untuk deteksi tabel)
-        let root = document.select(&body_sel).next().map(|e| {
+        // Hapus tag noise (nav/header/footer/script/style) dari HTML mentah
+        // lalu re-parse untuk ekstraksi teks yang bersih.
+        // scraper tidak bisa :not() pada subtree, jadi strip via string manipulation.
+        let cleaned_html = {
+            // Hapus seluruh blok <nav>...</nav>, <header>...</header>, dll dengan regex sederhana
+            let mut h = html.clone();
+            for tag in &["nav", "header", "footer", "aside", "noscript"] {
+                // Hapus tag beserta isinya (greedy, case-insensitive)
+                let open  = format!("<{}", tag);
+                let close = format!("</{}>", tag);
+                while let Some(start) = h.to_lowercase().find(&open) {
+                    if let Some(end_rel) = h.to_lowercase()[start..].find(&close) {
+                        let end = start + end_rel + close.len();
+                        h.replace_range(start..end, "");
+                    } else {
+                        break;
+                    }
+                }
+            }
+            // Hapus semua <script> dan <style>
+            for tag in &["script", "style"] {
+                let open  = format!("<{}", tag);
+                let close = format!("</{}>", tag);
+                while let Some(start) = h.to_lowercase().find(&open) {
+                    if let Some(end_rel) = h.to_lowercase()[start..].find(&close) {
+                        let end = start + end_rel + close.len();
+                        h.replace_range(start..end, "");
+                    } else {
+                        break;
+                    }
+                }
+            }
+            h
+        };
+
+        let doc2 = scraper::Html::parse_document(&cleaned_html);
+        let root = doc2.select(&body_sel).next().map(|e| {
             e.text().collect::<Vec<_>>().join("\n")
         }).unwrap_or_else(|| {
-            document.root_element().text().collect::<Vec<_>>().join("\n")
+            doc2.root_element().text().collect::<Vec<_>>().join("\n")
         });
 
+        // Gabungkan teks utama + DataTables JSON + tabel HTML
+        let mut combined = root;
+        if !html_table_text.is_empty() {
+            combined.push('\n');
+            combined.push_str(&html_table_text);
+        }
+        if !datatables_text.is_empty() {
+            combined.push('\n');
+            combined.push_str(&datatables_text);
+        }
+
         // Bersihkan: collapse multiple blank lines, trim tiap baris
-        root.lines()
+        combined
+            .lines()
             .map(|l| l.trim())
             .filter(|l| !l.is_empty())
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let _ = remove_sel; // suppress warning
+    let _ = remove_sel; // selector dideklarasikan untuk dokumentasi, stripping dilakukan manual di atas
 
     if raw_text.len() < 50 {
         return HttpResponse::UnprocessableEntity()

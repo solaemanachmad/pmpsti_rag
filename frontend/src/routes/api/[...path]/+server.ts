@@ -10,7 +10,7 @@ async function proxy(request: Request, path: string): Promise<Response> {
     'Content-Type': request.headers.get('Content-Type') ?? 'application/json',
   };
 
-  const headersToForward = ['Authorization', 'X-Guest-Token', 'X-Api-Key'];
+  const headersToForward = ['Authorization', 'X-Guest-Token', 'X-Api-Key', 'Cookie'];
   for (const h of headersToForward) {
     const val = request.headers.get(h);
     if (val) headers[h] = val;
