@@ -84,6 +84,25 @@ async fn embed_with_retry(
     Err("Embed failed after max retries".to_string())
 }
 
+// ── Chunking config (tune via env or change constants here) ────────────────
+/// Similarity threshold: kalimat dengan cosine similarity < nilai ini → split baru.
+/// Turunkan (e.g. 0.65) untuk chunk lebih kecil/granular,
+/// naikkan (e.g. 0.85) untuk chunk lebih besar/kontekstual.
+fn chunk_similarity_threshold() -> f32 {
+    std::env::var("CHUNK_SIMILARITY_THRESHOLD")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(0.75)
+}
+/// Minimum ukuran chunk (chars). Chunk lebih kecil dari ini di-merge ke sebelumnya.
+fn chunk_min_chars() -> usize {
+    std::env::var("CHUNK_MIN_CHARS")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(150)
+}
+/// Maximum ukuran chunk (chars). Chunk lebih besar dari ini di-force-split.
+fn chunk_max_chars() -> usize {
+    std::env::var("CHUNK_MAX_CHARS")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(1200)
+}
+
 // ── Semantic Chunking ───────────────────────────────────────────────────────
 /// Split `text` menjadi chunk-chunk yang semantically coherent.
 ///
@@ -1618,14 +1637,20 @@ pub async fn admin_ingest_url(
 
     let raw_text: String = {
         // Coba ambil dari main/article dulu, fallback ke body
+        // Join dengan "\n" bukan " " agar struktur baris/tabel tetap terjaga
+        // untuk semantic chunker (penting untuk deteksi tabel)
         let root = document.select(&body_sel).next().map(|e| {
-            e.text().collect::<Vec<_>>().join(" ")
+            e.text().collect::<Vec<_>>().join("\n")
         }).unwrap_or_else(|| {
-            document.root_element().text().collect::<Vec<_>>().join(" ")
+            document.root_element().text().collect::<Vec<_>>().join("\n")
         });
 
-        // Bersihkan whitespace berlebih
-        root.split_whitespace().collect::<Vec<_>>().join(" ")
+        // Bersihkan: collapse multiple blank lines, trim tiap baris
+        root.lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
     };
     let _ = remove_sel; // suppress warning
 
@@ -1644,9 +1669,9 @@ pub async fn admin_ingest_url(
 
     let chunks_text = match semantic_chunk(
         &http, embed_url, &gemini_key, &raw_text,
-        0.75,  // similarity threshold
-        150,   // min chunk size (chars)
-        1200,  // max chunk size (chars)
+        chunk_similarity_threshold(),
+        chunk_min_chars(),
+        chunk_max_chars(),
     ).await {
         Ok(c)  => c,
         Err(e) => return HttpResponse::BadGateway()
@@ -1722,9 +1747,9 @@ pub async fn admin_ingest_text(
     // Semantic chunking via Gemini embeddings
     let chunks_text = match semantic_chunk(
         &http, embed_url, &gemini_key, &raw_text,
-        0.75,  // similarity threshold
-        150,   // min chunk size (chars)
-        1200,  // max chunk size (chars)
+        chunk_similarity_threshold(),
+        chunk_min_chars(),
+        chunk_max_chars(),
     ).await {
         Ok(c)  => c,
         Err(e) => return HttpResponse::BadGateway()
