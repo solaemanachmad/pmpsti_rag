@@ -329,10 +329,11 @@ pub async fn register(
             .json(ApiError::new(400, "Email tidak valid atau password kurang dari 8 karakter"));
     }
 
-    // Hanya izinkan email @mail.ugm.ac.id
-    if !body.email.to_lowercase().ends_with("@mail.ugm.ac.id") {
+    // Izinkan email @mail.ugm.ac.id (mahasiswa) dan @ugm.ac.id (dosen/staf)
+    let email_lower = body.email.to_lowercase();
+    if !email_lower.ends_with("@mail.ugm.ac.id") && !email_lower.ends_with("@ugm.ac.id") {
         return HttpResponse::BadRequest()
-            .json(ApiError::new(400, "Registrasi hanya untuk email @mail.ugm.ac.id"));
+            .json(ApiError::new(400, "Registrasi hanya untuk email @mail.ugm.ac.id atau @ugm.ac.id"));
     }
 
     let hash = match tokio::task::spawn_blocking({
@@ -375,7 +376,7 @@ pub async fn register(
     }
 
     HttpResponse::Created().json(ApiSuccess::new(serde_json::json!({
-        "message": "Registrasi berhasil. Silakan cek email @mail.ugm.ac.id Anda untuk verifikasi akun."
+        "message": "Registrasi berhasil. Silakan cek email Anda untuk verifikasi akun."
     })))
 }
 

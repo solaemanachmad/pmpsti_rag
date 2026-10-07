@@ -9,6 +9,15 @@ struct ResendEmail<'a> {
     html:    String,
 }
 
+/// From address untuk semua email keluar.
+/// Set env var EMAIL_FROM di Render untuk domain custom yang sudah diverifikasi di Resend.
+/// Contoh: "PMPSTI <noreply@pmpsti.ugm.ac.id>"
+/// Default: onboarding@resend.dev (hanya berfungsi ke email terverifikasi di Resend)
+fn from_address() -> String {
+    std::env::var("EMAIL_FROM")
+        .unwrap_or_else(|_| "PMPSTI <onboarding@resend.dev>".to_string())
+}
+
 pub async fn send_verification_email(
     api_key:    &str,
     to_email:   &str,
@@ -37,9 +46,10 @@ pub async fn send_verification_email(
 </html>
     "#, verify_url = verify_url, base_url = base_url);
 
+    let from = from_address();
     let client = Client::new();
     let payload = ResendEmail {
-        from:    "PMPSTI <onboarding@resend.dev>",
+        from:    &from,
         to:      vec![to_email],
         subject: "Verifikasi Email — PMPSTI",
         html,
@@ -88,9 +98,10 @@ pub async fn send_password_reset_email(
 </html>
     "#, reset_url = reset_url, base_url = base_url);
 
+    let from = from_address();
     let client = Client::new();
     let payload = ResendEmail {
-        from:    "PMPSTI <onboarding@resend.dev>",
+        from:    &from,
         to:      vec![to_email],
         subject: "Reset Password — PMPSTI",
         html,
@@ -139,9 +150,10 @@ pub async fn send_welcome_email(
 </html>
     "#, reset_url = reset_url, base_url = base_url);
 
+    let from = from_address();
     let client = Client::new();
     let payload = ResendEmail {
-        from:    "PMPSTI <onboarding@resend.dev>",
+        from:    &from,
         to:      vec![to_email],
         subject: "Selamat Datang — PMPSTI",
         html,
