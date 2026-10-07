@@ -1283,8 +1283,12 @@ async fn fetch_html_with_js(url: &str) -> Result<String, String> {
     let script = format!(
         r#"
 const {{ chromium }} = require('playwright');
+// Coba cari chromium: 1) env CHROMIUM_BIN, 2) which chromium-browser, 3) biarkan Playwright cari sendiri
+const executablePath = process.env.CHROMIUM_BIN || undefined;
 (async () => {{
-  const browser = await chromium.launch({{ args: ['--no-sandbox','--disable-dev-shm-usage'] }});
+  const launchOpts = {{ args: ['--no-sandbox','--disable-dev-shm-usage'] }};
+  if (executablePath) launchOpts.executablePath = executablePath;
+  const browser = await chromium.launch(launchOpts);
   const page = await browser.newPage();
   await page.goto({url:?}, {{ waitUntil: 'networkidle', timeout: 30000 }});
   // Tunggu sampai ada baris tabel atau timeout 15 detik

@@ -47,7 +47,13 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libgbm1 \
     libasound2t64 \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Playwright tanpa download browser (pakai chromium-browser system)
+RUN npm install -g playwright@1.49.0 && \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g playwright@1.49.0
 
 WORKDIR /app
 COPY --from=builder /app/target/release/pmpsti ./pmpsti
@@ -56,6 +62,8 @@ RUN chown -R ubuntu:ubuntu /app
 USER ubuntu
 
 ENV CHROMIUM_BIN=/usr/bin/chromium-browser
+# Playwright pakai chromium system — tidak perlu download browser sendiri
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 EXPOSE 7860
 
