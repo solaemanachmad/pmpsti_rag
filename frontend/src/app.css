@@ -62,27 +62,66 @@
     line-height: 1.6;
   }
 
-  /* Markdown prose inside chat bubbles */
-  .prose p { margin: 0.5em 0; }
-  .prose p:first-child { margin-top: 0; }
-  .prose p:last-child { margin-bottom: 0; }
-  .prose ul, .prose ol { padding-left: 1.5em; margin: 0.5em 0; }
-  .prose li { margin: 0.2em 0; }
-  .prose strong { font-weight: 600; }
-  .prose code {
+  /* Markdown prose inside chat bubbles — shared by .prose and .prose-chat */
+  .prose p, .prose-chat p { margin: 0.5em 0; }
+  .prose p:first-child, .prose-chat p:first-child { margin-top: 0; }
+  .prose p:last-child,  .prose-chat p:last-child  { margin-bottom: 0; }
+  .prose ul, .prose-chat ul,
+  .prose ol, .prose-chat ol { padding-left: 1.5em; margin: 0.5em 0; }
+  .prose li, .prose-chat li { margin: 0.2em 0; }
+  .prose strong, .prose-chat strong { font-weight: 600; }
+  .prose em,     .prose-chat em     { font-style: italic; }
+  .prose h1, .prose-chat h1 { font-size: 1.2em; font-weight: 700; margin: 0.8em 0 0.4em; }
+  .prose h2, .prose-chat h2 { font-size: 1.1em; font-weight: 700; margin: 0.7em 0 0.3em; }
+  .prose h3, .prose-chat h3 { font-size: 1.0em; font-weight: 600; margin: 0.6em 0 0.2em; }
+  .prose code, .prose-chat code {
     font-size: 0.875em;
     background: hsl(var(--muted));
     padding: 0.1em 0.35em;
     border-radius: 4px;
   }
-  .prose pre {
+  .prose pre, .prose-chat pre {
     background: hsl(var(--muted));
     padding: 0.75em 1em;
     border-radius: 8px;
     overflow-x: auto;
     margin: 0.5em 0;
   }
-  .prose pre code { background: none; padding: 0; }
+  .prose pre code, .prose-chat pre code { background: none; padding: 0; }
+  /* Tabel Markdown */
+  .prose table, .prose-chat table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.75em 0;
+    font-size: 0.9em;
+  }
+  .prose th, .prose-chat th {
+    padding: 0.4em 0.75em;
+    font-weight: 600;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--muted));
+    text-align: left;
+  }
+  .prose td, .prose-chat td {
+    padding: 0.35em 0.75em;
+    border: 1px solid hsl(var(--border));
+    vertical-align: top;
+  }
+  .prose tr:nth-child(even), .prose-chat tr:nth-child(even) {
+    background: hsl(var(--muted) / 0.3);
+  }
+  /* Blockquote */
+  .prose blockquote, .prose-chat blockquote {
+    border-left: 3px solid hsl(var(--primary));
+    margin: 0.5em 0;
+    padding: 0.25em 0.75em;
+    color: hsl(var(--muted-foreground));
+  }
+  .prose hr, .prose-chat hr {
+    border: none;
+    border-top: 1px solid hsl(var(--border));
+    margin: 0.75em 0;
+  }
 
   sup.citation-ref {
     font-size: 0.7em;

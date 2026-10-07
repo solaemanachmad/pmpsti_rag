@@ -173,19 +173,48 @@ impl RagEngine {
         search_mode:     &str,
         top_k:           i64,
     ) -> Result<(String, Vec<SearchResult>)> {
-        let chunks = match search_mode {
+        let initial_chunks = match search_mode {
             "semantic" => self.search.search_semantic(query, top_k, category_filter).await?,
             "keyword"  => self.search.search_keyword(query, top_k, category_filter).await?,
             _          => self.search.search(query, top_k, category_filter).await?,
         };
 
-        if chunks.is_empty() {
+        if initial_chunks.is_empty() {
             return Ok((
                 "Maaf, saya tidak menemukan informasi yang relevan dengan pertanyaan tersebut \
                  dalam dokumen yang tersedia.".to_string(),
                 vec![],
             ));
         }
+
+        // Document expansion: jika satu dokumen muncul >= 2x dalam hasil pencarian,
+        // fetch SEMUA chunk dokumen itu agar jawaban tidak terpotong
+        let mut doc_hit_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for c in &initial_chunks {
+            if !c.document_id.is_empty() {
+                *doc_hit_count.entry(c.document_id.clone()).or_insert(0) += 1;
+            }
+        }
+        let expand_ids: Vec<String> = doc_hit_count.into_iter()
+            .filter(|(_, count)| *count >= 2)
+            .map(|(id, _)| id)
+            .collect();
+
+        let chunks = if expand_ids.is_empty() {
+            initial_chunks
+        } else {
+            let mut expanded = self.search.db
+                .fetch_all_chunks_for_documents(&expand_ids)
+                .await
+                .unwrap_or_default();
+            // tambahkan chunk dari dokumen yang TIDAK di-expand
+            for c in initial_chunks {
+                if !expand_ids.contains(&c.document_id) {
+                    expanded.push(c);
+                }
+            }
+            expanded
+        };
 
         let context = SearchEngine::format_context(&chunks);
         let system_prompt = build_system_prompt();
@@ -321,9 +350,13 @@ fn build_system_prompt() -> String {
         studi secara langsung.\n\
      3. Untuk pertanyaan casual atau sapaan (contoh: apa kabar, halo, siapa kamu), jawab secara \
         natural dan ramah sebagai asisten akademik — tidak perlu merujuk dokumen.\n\
-     4. Jika konteks berisi daftar atau tabel (misal daftar mitra, jadwal, mata kuliah), baca \
-        dan sebutkan seluruh isinya secara lengkap, jangan hanya sebagian.\n\
-     5. Jangan mengarang fakta akademik yang tidak ada di konteks."
+     4. Jika konteks berisi daftar atau tabel (misal daftar mitra, jadwal, mata kuliah), WAJIB \
+        sebutkan SEMUA entri secara lengkap tanpa pengecualian — jangan meringkas atau hanya \
+        menyebut sebagian. Gunakan format tabel Markdown jika memungkinkan.\n\
+     5. Format jawaban menggunakan Markdown: **bold** untuk penekanan, tabel dengan | kolom |, \
+        daftar dengan - atau nomor. JANGAN tulis simbol ** atau | secara literal tanpa maksud \
+        pemformatan.\n\
+     6. Jangan mengarang fakta akademik yang tidak ada di konteks."
         .to_string()
 }
 fn build_user_message(query: &str, context: &str) -> String {
