@@ -33,10 +33,10 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Dependencies untuk Chromium yang di-download Playwright
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
-    chromium-browser \
     fonts-liberation \
     libnss3 \
     libatk-bridge2.0-0 \
@@ -47,23 +47,25 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libgbm1 \
     libasound2t64 \
+    libxshmfence1 \
+    libdrm2 \
+    libxext6 \
+    libxfixes3 \
+    libxcb1 \
+    libx11-6 \
     nodejs \
     npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright tanpa download browser (pakai chromium-browser system)
+# Install Playwright dan download Chromium-nya sendiri
 RUN npm install -g playwright@1.49.0 && \
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g playwright@1.49.0
+    playwright install chromium
 
 WORKDIR /app
 COPY --from=builder /app/target/release/pmpsti ./pmpsti
 
 RUN chown -R ubuntu:ubuntu /app
 USER ubuntu
-
-ENV CHROMIUM_BIN=/usr/bin/chromium-browser
-# Playwright pakai chromium system — tidak perlu download browser sendiri
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 EXPOSE 7860
 

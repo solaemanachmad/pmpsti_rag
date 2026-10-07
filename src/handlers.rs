@@ -1283,12 +1283,8 @@ async fn fetch_html_with_js(url: &str) -> Result<String, String> {
     let script = format!(
         r#"
 const {{ chromium }} = require('playwright');
-// Coba cari chromium: 1) env CHROMIUM_BIN, 2) which chromium-browser, 3) biarkan Playwright cari sendiri
-const executablePath = process.env.CHROMIUM_BIN || undefined;
 (async () => {{
-  const launchOpts = {{ args: ['--no-sandbox','--disable-dev-shm-usage'] }};
-  if (executablePath) launchOpts.executablePath = executablePath;
-  const browser = await chromium.launch(launchOpts);
+  const browser = await chromium.launch({{ args: ['--no-sandbox','--disable-dev-shm-usage'] }});
   const page = await browser.newPage();
   await page.goto({url:?}, {{ waitUntil: 'networkidle', timeout: 30000 }});
   // Tunggu sampai ada baris tabel atau timeout 15 detik
@@ -1301,8 +1297,8 @@ const executablePath = process.env.CHROMIUM_BIN || undefined;
         url = url
     );
 
-    // Tulis script ke file tmp agar tidak masalah escaping shell
-    let script_path = format!("/tmp/pw_render_{}.mjs", uuid::Uuid::new_v4());
+    // Tulis script ke file tmp — HARUS .js (CommonJS), bukan .mjs
+    let script_path = format!("/tmp/pw_render_{}.js", uuid::Uuid::new_v4());
     if tokio::fs::write(&script_path, script.as_bytes()).await.is_err() {
         return Ok(html); // fallback
     }
