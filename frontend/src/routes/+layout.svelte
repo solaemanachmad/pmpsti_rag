@@ -63,8 +63,8 @@
   $: isProfile   = $page.url.pathname === '/profile' || $page.url.pathname.startsWith('/profile/');
 
   const navBase   = 'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors';
-  const navActive = 'bg-white/15 text-white';
-  const navIdle   = 'text-white/70 hover:text-white hover:bg-white/10';
+  $: navActive = dark ? 'bg-white/15 text-white' : 'bg-white/20 text-white font-semibold';
+  $: navIdle   = dark ? 'text-white/70 hover:text-white hover:bg-white/10' : 'text-white/80 hover:text-white hover:bg-white/15';
 
   const mobileBase   = 'flex items-center gap-2.5 px-3 py-2.5 rounded-md text-sm transition-colors';
   const mobileActive = 'bg-accent/20 text-foreground font-medium';
@@ -82,11 +82,12 @@
   <div class="flex flex-col h-screen overflow-hidden bg-background">
 
     <!-- ── Topbar ── -->
-    <header class="bg-[#002147] text-white h-14 flex items-center px-4 gap-4 shrink-0 z-40 border-b border-white/10">
+    <header class="h-14 flex items-center px-4 gap-4 shrink-0 z-40 border-b transition-colors
+      {dark ? 'bg-[#002147] text-white border-white/10' : 'bg-[#0055A5] text-white border-blue-700/30'}">
 
       <a href="/chat" class="flex items-center gap-2.5 shrink-0 mr-2">
         <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-8 w-auto" />
-        <span class="font-bold text-sm tracking-wide">DTETI</span>
+        <span class="font-bold text-sm tracking-wide text-white">DTETI</span>
       </a>
 
       <nav class="hidden md:flex items-center gap-1">
@@ -107,15 +108,18 @@
 
       <div class="hidden md:flex items-center gap-1">
         <button on:click={toggleDark}
-          class="p-2 rounded-md text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+          class="p-2 rounded-md transition-colors
+            {dark ? 'text-white/70 hover:text-white hover:bg-white/10' : 'text-white/80 hover:text-white hover:bg-white/15'}"
           title={dark ? 'Light mode' : 'Dark mode'}>
           {#if dark}<Sun size={16} />{:else}<Moon size={16} />{/if}
         </button>
 
         <div class="relative">
           <button on:click={() => userDropdown = !userDropdown}
-            class="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm text-white/70
-                   hover:text-white hover:bg-white/10 transition-colors {isProfile ? 'bg-white/15 text-white' : ''}">
+            class="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-colors
+              {dark
+                ? `text-white/70 hover:text-white hover:bg-white/10 ${isProfile ? 'bg-white/15 text-white' : ''}`
+                : `text-white/80 hover:text-white hover:bg-white/15 ${isProfile ? 'bg-white/20 text-white' : ''}`}">
             <User size={15} />
             <span class="max-w-[120px] truncate">{$currentUser?.display_name || $currentUser?.email || 'Akun'}</span>
             <ChevronDown size={13} class="opacity-60" />
@@ -140,7 +144,8 @@
       </div>
 
       <button on:click={() => menuOpen = !menuOpen}
-        class="md:hidden p-1.5 rounded-md text-white/70 hover:text-white hover:bg-white/10 transition-colors">
+        class="md:hidden p-1.5 rounded-md transition-colors
+          {dark ? 'text-white/70 hover:text-white hover:bg-white/10' : 'text-white/80 hover:text-white hover:bg-white/15'}">
         {#if menuOpen}<X size={20} />{:else}<Menu size={20} />{/if}
       </button>
     </header>
