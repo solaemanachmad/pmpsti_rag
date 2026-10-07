@@ -165,14 +165,15 @@ impl RagEngine {
         Self { search, llm, http: Client::new() }
     }
 
-    pub async fn answer(
+    /// Cari chunks (dengan document expansion), kembalikan sebelum LLM dipanggil.
+    /// Handler bisa filter/deduplicate dulu, lalu panggil answer_with_chunks().
+    pub async fn search_chunks(
         &self,
         query:           &str,
-        history:         &[Message],
         category_filter: Option<&str>,
         search_mode:     &str,
         top_k:           i64,
-    ) -> Result<(String, Vec<SearchResult>)> {
+    ) -> Result<Vec<SearchResult>> {
         let initial_chunks = match search_mode {
             "semantic" => self.search.search_semantic(query, top_k, category_filter).await?,
             "keyword"  => self.search.search_keyword(query, top_k, category_filter).await?,
@@ -180,15 +181,10 @@ impl RagEngine {
         };
 
         if initial_chunks.is_empty() {
-            return Ok((
-                "Maaf, saya tidak menemukan informasi yang relevan dengan pertanyaan tersebut \
-                 dalam dokumen yang tersedia.".to_string(),
-                vec![],
-            ));
+            return Ok(vec![]);
         }
 
-        // Document expansion: jika satu dokumen muncul >= 2x dalam hasil pencarian,
-        // fetch SEMUA chunk dokumen itu agar jawaban tidak terpotong
+        // Document expansion
         let mut doc_hit_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for c in &initial_chunks {
             if !c.document_id.is_empty() {
@@ -200,40 +196,53 @@ impl RagEngine {
             .map(|(id, _)| id)
             .collect();
 
-        let chunks = if expand_ids.is_empty() {
-            initial_chunks
+        if expand_ids.is_empty() {
+            Ok(initial_chunks)
         } else {
             let mut expanded = self.search.db
                 .fetch_all_chunks_for_documents(&expand_ids)
                 .await
                 .unwrap_or_default();
-            // tambahkan chunk dari dokumen yang TIDAK di-expand
             for c in initial_chunks {
                 if !expand_ids.contains(&c.document_id) {
                     expanded.push(c);
                 }
             }
-            expanded
-        };
+            Ok(expanded)
+        }
+    }
 
-        let context = SearchEngine::format_context(&chunks);
+    /// Panggil LLM dengan chunks yang sudah difilter oleh handler.
+    /// chunks = apa yang akan ditampilkan sebagai kartu sumber → nomor [1]..[N] cocok.
+    /// Menerima slice of references (sesuai return type filter_sources).
+    pub async fn answer_with_chunks(
+        &self,
+        query:   &str,
+        history: &[Message],
+        chunks:  &[&SearchResult],
+    ) -> Result<String> {
+        if chunks.is_empty() {
+            return Ok(
+                "Maaf, saya tidak menemukan informasi yang relevan dengan pertanyaan tersebut \
+                 dalam dokumen yang tersedia.".to_string()
+            );
+        }
+
+        // Format context dari references
+        let context = SearchEngine::format_context_refs(chunks);
         let system_prompt = build_system_prompt();
 
-        // Deteksi apakah hasil mencakup banyak kategori berbeda
-        // Jika iya, tambahkan instruksi agar AI menawarkan klarifikasi
+        // Suggest klarifikasi jika hasil dari >= 3 kategori berbeda
         let categories: std::collections::HashSet<&str> = chunks.iter()
-            .map(|c| c.category.as_str())
+            .map(|c| c.category.as_str())  // c: &&SearchResult → works fine
             .filter(|c| !c.is_empty())
             .collect();
         let clarification_hint = if categories.len() >= 3 {
             let cat_list: Vec<&str> = categories.into_iter().collect();
             format!(
-                "\n\nCATATAN: Hasil pencarian mencakup {} kategori berbeda: {}. \
-                 Jika pertanyaan pengguna ambigu, jawab sebaik mungkin LALU di akhir \
-                 tawarkan klarifikasi dengan kalimat seperti: \
-                 \"Apakah Anda bertanya tentang [pilihan A] atau [pilihan B]?\"",
-                cat_list.len(),
-                cat_list.join(", ")
+                "\n\nCATATAN: Hasil mencakup {} kategori: {}. \
+                 Jika pertanyaan ambigu, jawab sebaik mungkin LALU tawarkan klarifikasi.",
+                cat_list.len(), cat_list.join(", ")
             )
         } else {
             String::new()
@@ -254,7 +263,7 @@ impl RagEngine {
             LlmProvider::OpenAICompatible => self.call_openai_compatible(&messages).await?,
         };
 
-        Ok((answer, chunks))
+        Ok(answer)
     }
 
     async fn call_ollama(&self, messages: &[Message]) -> Result<String> {

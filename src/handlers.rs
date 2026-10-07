@@ -455,12 +455,27 @@ pub async fn ask(
 
     let start = std::time::Instant::now();
 
-    let (answer, chunks) = match state.rag.answer(
+    // 1. Cari & expand dokumen
+    let all_chunks = match state.rag.search_chunks(
         &body.query,
-        &history,
         cat_filter,
         search_mode,
         top_k,
+    ).await {
+        Ok(r)  => r,
+        Err(e) => return HttpResponse::InternalServerError()
+            .json(ApiError::new(500, format!("Gagal mencari dokumen: {}", e))),
+    };
+
+    // 2. Filter DULU → hanya chunk yang akan ditampilkan sebagai kartu
+    //    LLM akan menerima konteks yang sama persis → nomor [1]..[N] cocok
+    let relevant = filter_sources(&all_chunks, 0.40, 0.25, 6);
+
+    // 3. Panggil LLM dengan filtered chunks saja
+    let answer = match state.rag.answer_with_chunks(
+        &body.query,
+        &history,
+        &relevant,
     ).await {
         Ok(r)  => r,
         Err(e) => return HttpResponse::InternalServerError()
@@ -468,10 +483,6 @@ pub async fn ask(
     };
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
-
-    // Filter chunks → hanya referensi yang benar-benar relevan
-    // min_score=0.40 (sedikit lebih lebar), gap_ratio=0.25, max=6
-    let relevant = filter_sources(&chunks, 0.40, 0.25, 6);
 
     // Simpan ke session (gunakan relevant chunks saja)
     let now = Utc::now().to_rfc3339();
@@ -499,7 +510,7 @@ pub async fn ask(
     let _ = state.db.save_session(&session).await;
 
     // Log query
-    let top_score = chunks.first().map(|c| c.score as f32).unwrap_or(0.0);
+    let top_score = all_chunks.first().map(|c| c.score as f32).unwrap_or(0.0);
     let _ = state.db.log_query(
         &body.query,
         "id",
@@ -574,12 +585,26 @@ pub async fn ask_public(
 
     let start = std::time::Instant::now();
 
-    let (answer, chunks) = match state.rag.answer(
+    // 1. Cari & expand dokumen
+    let all_chunks = match state.rag.search_chunks(
         &body.query,
-        &[],            // no history for guests
         None,
         search_mode,
         top_k,
+    ).await {
+        Ok(r)  => r,
+        Err(e) => return HttpResponse::InternalServerError()
+            .json(ApiError::new(500, format!("Gagal mencari dokumen: {}", e))),
+    };
+
+    // 2. Filter dulu → nomor konteks = nomor kartu sumber
+    let relevant = filter_sources(&all_chunks, 0.45, 0.25, 5);
+
+    // 3. LLM dengan filtered chunks
+    let answer = match state.rag.answer_with_chunks(
+        &body.query,
+        &[],    // no history for guests
+        &relevant,
     ).await {
         Ok(r)  => r,
         Err(e) => return HttpResponse::InternalServerError()
@@ -587,7 +612,6 @@ pub async fn ask_public(
     };
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
-    let relevant   = filter_sources(&chunks, 0.45, 0.25, 5);
 
     // Increment setelah berhasil menjawab
     let new_count = state.db.guest_increment(&guest_token).await;
