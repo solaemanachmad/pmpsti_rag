@@ -11,87 +11,6 @@ use crate::email::{send_verification_email, send_password_reset_email, send_welc
 use crate::models::*;
 use crate::rag::RagEngine;
 
-// ── Shared embed helper ──────────────────────────────────────────────────────
-async fn embed_and_store(
-    state:       &web::Data<AppState>,
-    raw_text:    &str,
-    title:       &str,
-    source_url:  &str,
-    category:    &str,
-    subcategory: &str,
-    document_id: &str,
-) -> Result<usize, HttpResponse> {
-    let chunk_size = 800usize;
-    let overlap    = 100usize;
-    let chars: Vec<char> = raw_text.chars().collect();
-    let mut chunks_text: Vec<String> = Vec::new();
-    let mut start = 0usize;
-    while start < chars.len() {
-        let end = (start + chunk_size).min(chars.len());
-        chunks_text.push(chars[start..end].iter().collect());
-        if end >= chars.len() { break; }
-        start += chunk_size.saturating_sub(overlap);
-    }
-
-    let gemini_key = std::env::var("GEMINI_API_KEY").map_err(|_| {
-        HttpResponse::InternalServerError()
-            .json(ApiError::new(500, "GEMINI_API_KEY tidak dikonfigurasi"))
-    })?;
-    let embed_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
-    let http = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (compatible; PMPSTI-Bot/1.0)")
-        .timeout(std::time::Duration::from_secs(30))
-        .build().unwrap();
-
-    #[derive(serde::Serialize)]
-    struct EmbedReq { content: EC, #[serde(rename="outputDimensionality")] output_dimensionality: u32 }
-    #[derive(serde::Serialize)]
-    struct EC { parts: Vec<EP> }
-    #[derive(serde::Serialize)]
-    struct EP { text: String }
-    #[derive(serde::Deserialize)]
-    struct EmbedResp { embedding: EV }
-    #[derive(serde::Deserialize)]
-    struct EV { values: Vec<f32> }
-
-    let mut doc_chunks: Vec<DocumentChunk> = Vec::new();
-    for (i, chunk_text) in chunks_text.iter().enumerate() {
-        let embed_body = EmbedReq {
-            content: EC { parts: vec![EP { text: chunk_text.clone() }] },
-            output_dimensionality: 768,
-        };
-        let resp = http.post(embed_url)
-            .header("x-goog-api-key", &gemini_key)
-            .json(&embed_body)
-            .send().await
-            .map_err(|e| HttpResponse::BadGateway()
-                .json(ApiError::new(502, format!("Embed error chunk {i}: {e}"))))?;
-        if !resp.status().is_success() {
-            let st = resp.status().as_u16();
-            let bd = resp.text().await.unwrap_or_default();
-            return Err(HttpResponse::BadGateway()
-                .json(ApiError::new(502, format!("Gemini embed {st}: {bd}"))));
-        }
-        let embed_data = resp.json::<EmbedResp>().await
-            .map_err(|e| HttpResponse::InternalServerError()
-                .json(ApiError::new(500, format!("Parse embed: {e}"))))?;
-        doc_chunks.push(DocumentChunk {
-            document_id:   document_id.to_string(),
-            title:         title.to_string(),
-            content:       chunk_text.clone(),
-            source_url:    source_url.to_string(),
-            category:      category.to_string(),
-            subcategory:   subcategory.to_string(),
-            document_type: "url".to_string(),
-            chunk_index:   i as i32,
-            embedding:     embed_data.embedding.values,
-        });
-    }
-
-    state.db.insert_document_chunks(&doc_chunks).await
-        .map_err(|e| HttpResponse::InternalServerError()
-            .json(ApiError::new(500, format!("DB error: {e}"))))
-}
 
 // ── Rate limiter state: IP -> (fail_count, window_start) ──
 #[derive(Clone)]
@@ -1358,34 +1277,45 @@ async fn fetch_html_with_js(url: &str) -> Result<String, String> {
         return Ok(html);
     }
 
-    // 3. Fallback: Chromium headless
-    let chromium = std::env::var("CHROMIUM_BIN")
-        .unwrap_or_else(|_| "chromium-browser".to_string());
+    // 3. Fallback: Playwright via Node.js
+    //    Menunggu tbody tr muncul (DataTables selesai load) — jauh lebih reliable
+    //    daripada --virtual-time-budget yang tidak menunggu network request.
+    let script = format!(
+        r#"
+const {{ chromium }} = require('playwright');
+(async () => {{
+  const browser = await chromium.launch({{ args: ['--no-sandbox','--disable-dev-shm-usage'] }});
+  const page = await browser.newPage();
+  await page.goto({url:?}, {{ waitUntil: 'networkidle', timeout: 30000 }});
+  // Tunggu sampai ada baris tabel atau timeout 15 detik
+  try {{ await page.waitForSelector('tbody tr', {{ timeout: 15000 }}); }} catch(_) {{}}
+  const html = await page.content();
+  await browser.close();
+  process.stdout.write(html);
+}})().catch(e => {{ process.stderr.write(String(e)); process.exit(1); }});
+"#,
+        url = url
+    );
 
-    let output = tokio::process::Command::new(&chromium)
-        .args([
-            "--headless=new",
-            "--no-sandbox",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-            "--dump-dom",
-            "--virtual-time-budget=5000",  // tunggu 5 detik JS selesai
-            url,
-        ])
-        .output()
-        .await
-        .map_err(|e| format!("Chromium tidak tersedia: {e}"))?;
-
-    if !output.status.success() {
-        // Fallback ke reqwest hasil jika chromium gagal
-        return Ok(html);
+    // Tulis script ke file tmp agar tidak masalah escaping shell
+    let script_path = format!("/tmp/pw_render_{}.mjs", uuid::Uuid::new_v4());
+    if tokio::fs::write(&script_path, script.as_bytes()).await.is_err() {
+        return Ok(html); // fallback
     }
 
-    let rendered = String::from_utf8_lossy(&output.stdout).to_string();
-    if rendered.len() > html.len() {
-        Ok(rendered)
-    } else {
-        Ok(html)
+    let output = tokio::process::Command::new("node")
+        .arg(&script_path)
+        .output()
+        .await;
+
+    let _ = tokio::fs::remove_file(&script_path).await;
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let rendered = String::from_utf8_lossy(&o.stdout).to_string();
+            if rendered.len() > html.len() { Ok(rendered) } else { Ok(html) }
+        }
+        _ => Ok(html), // fallback ke reqwest jika node/playwright tidak ada
     }
 }
 
@@ -1547,35 +1477,3 @@ pub async fn admin_ingest_url(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  ADMIN: INGEST PLAIN TEXT (untuk CSV / data terstruktur tanpa scraping)
-// ══════════════════════════════════════════════════════════════════
-
-pub async fn admin_ingest_text(
-    req:   HttpRequest,
-    state: web::Data<AppState>,
-    body:  web::Json<IngestTextRequest>,
-) -> HttpResponse {
-    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
-    if claims.role != "admin" {
-        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
-    }
-
-    let title       = body.title.trim().to_string();
-    let content     = body.content.trim().to_string();
-    let source_url  = body.source_url.clone().unwrap_or_default();
-    let category    = body.category.clone().unwrap_or_else(|| "Umum".to_string());
-    let subcategory = body.subcategory.clone().unwrap_or_else(|| "—".to_string());
-
-    if title.is_empty() || content.len() < 20 {
-        return HttpResponse::BadRequest()
-            .json(ApiError::new(400, "title dan content wajib diisi (content min 20 karakter)"));
-    }
-
-    let document_id = format!("text-{}", uuid::Uuid::new_v4());
-
-    match embed_and_store(&state, &content, &title, &source_url, &category, &subcategory, &document_id).await {
-        Ok(n)  => HttpResponse::Ok().json(ApiSuccess::new(IngestResponse { document_id, chunks: n, title })),
-        Err(r) => r,
-    }
-}
