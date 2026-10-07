@@ -15,8 +15,10 @@
   marked.use({
     renderer: {
       paragraph(token) {
-        // Konversi [1] [2] [3] di akhir kalimat jadi superscript
-        const text = (token.text || '').replace(/\[(\d+)\]/g, '<sup class="citation-ref">[$1]</sup>');
+        // Parse inline tokens dulu (supaya **bold** dll ter-render),
+        // lalu konversi [1] [2] [3] jadi superscript
+        const inlineHtml = this.parser.parseInline(token.tokens ?? []);
+        const text = inlineHtml.replace(/\[(\d+)\]/g, '<sup class="citation-ref">[$1]</sup>');
         return `<p>${text}</p>`;
       }
     }

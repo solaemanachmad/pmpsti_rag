@@ -397,6 +397,127 @@ impl Database {
     }
 
     // ════════════════════════════════════════════════════════════
+    //  SEARCH — RECIPROCAL RANK FUSION (RRF)
+    //  Jalankan semantic + keyword secara terpisah, gabungkan dengan
+    //  RRF(k=60): score = 1/(k + rank_semantic) + 1/(k + rank_keyword)
+    //  Lebih robust dari fixed-weight hybrid karena tidak bergantung
+    //  pada skala score yang berbeda antara cosine distance dan ts_rank.
+    // ════════════════════════════════════════════════════════════
+    pub async fn search_rrf(
+        &self,
+        query_text:      &str,
+        query_embedding: Vec<f32>,
+        limit:           i64,
+        category_filter: Option<&str>,
+    ) -> Result<Vec<SearchResult>, sqlx::Error> {
+        // Ambil lebih banyak kandidat dari masing-masing, lalu fuse
+        let candidate_limit = (limit * 3).max(30);
+        let vec = Vector::from(query_embedding);
+
+        // Semantic candidates dengan rank
+        let sem_rows = sqlx::query(
+            "SELECT document_id, title, content, category, subcategory,
+                    COALESCE(source_url, '') AS source_url,
+                    page_number, chunk_index,
+                    ROW_NUMBER() OVER (ORDER BY embedding <=> $1) AS rank
+             FROM documents
+             WHERE embedding IS NOT NULL
+               AND ($3::text IS NULL OR category = $3)
+             ORDER BY embedding <=> $1
+             LIMIT $2",
+        )
+        .bind(&vec)
+        .bind(candidate_limit)
+        .bind(category_filter)
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Keyword candidates dengan rank (fallback graceful jika tidak ada match)
+        let kw_rows = sqlx::query(
+            "SELECT document_id, title, content, category, subcategory,
+                    COALESCE(source_url, '') AS source_url,
+                    page_number, chunk_index,
+                    ROW_NUMBER() OVER (ORDER BY ts_rank(to_tsvector('indonesian', content),
+                                       plainto_tsquery('indonesian', $1), 1) DESC) AS rank
+             FROM documents
+             WHERE ($3::text IS NULL OR category = $3)
+             ORDER BY ts_rank(to_tsvector('indonesian', content),
+                              plainto_tsquery('indonesian', $1), 1) DESC
+             LIMIT $2",
+        )
+        .bind(query_text)
+        .bind(candidate_limit)
+        .bind(category_filter)
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Build map: chunk_key → (SearchResult, rrf_score)
+        use std::collections::HashMap;
+        let k = 60.0f64;
+        let mut scores: HashMap<(String, Option<i32>), (SearchResult, f64)> = HashMap::new();
+
+        for row in &sem_rows {
+            let doc_id:     String       = row.get("document_id");
+            let chunk_idx:  Option<i32>  = row.get("chunk_index");
+            let rank:       i64          = row.get("rank");
+            let rrf = 1.0 / (k + rank as f64);
+            let key = (doc_id.clone(), chunk_idx);
+            scores.entry(key)
+                .and_modify(|e| e.1 += rrf)
+                .or_insert_with(|| {
+                    let sr = SearchResult {
+                        document_id: doc_id,
+                        title:       row.get::<Option<String>, _>("title").unwrap_or_default(),
+                        content:     row.get::<Option<String>, _>("content").unwrap_or_default(),
+                        snippet:     String::new(),
+                        category:    row.get::<Option<String>, _>("category").unwrap_or_default(),
+                        subcategory: row.get::<Option<String>, _>("subcategory").unwrap_or_default(),
+                        source_url:  row.get("source_url"),
+                        page_number: row.get("page_number"),
+                        chunk_index: chunk_idx,
+                        score:       0.0,
+                    };
+                    (sr, rrf)
+                });
+        }
+
+        for row in &kw_rows {
+            let doc_id:     String       = row.get("document_id");
+            let chunk_idx:  Option<i32>  = row.get("chunk_index");
+            let rank:       i64          = row.get("rank");
+            let rrf = 1.0 / (k + rank as f64);
+            let key = (doc_id.clone(), chunk_idx);
+            scores.entry(key)
+                .and_modify(|e| e.1 += rrf)
+                .or_insert_with(|| {
+                    let sr = SearchResult {
+                        document_id: doc_id,
+                        title:       row.get::<Option<String>, _>("title").unwrap_or_default(),
+                        content:     row.get::<Option<String>, _>("content").unwrap_or_default(),
+                        snippet:     String::new(),
+                        category:    row.get::<Option<String>, _>("category").unwrap_or_default(),
+                        subcategory: row.get::<Option<String>, _>("subcategory").unwrap_or_default(),
+                        source_url:  row.get("source_url"),
+                        page_number: row.get("page_number"),
+                        chunk_index: chunk_idx,
+                        score:       0.0,
+                    };
+                    (sr, rrf)
+                });
+        }
+
+        // Sort by RRF score descending, assign final score, take limit
+        let mut results: Vec<SearchResult> = scores
+            .into_values()
+            .map(|(mut sr, rrf_score)| { sr.score = rrf_score; sr })
+            .collect();
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(limit as usize);
+
+        Ok(results)
+    }
+
+    // ════════════════════════════════════════════════════════════
     //  SEARCH — PURE FULL-TEXT (BM25)
     // ════════════════════════════════════════════════════════════
     pub async fn search_fulltext(
