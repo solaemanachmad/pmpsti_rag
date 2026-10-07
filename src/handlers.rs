@@ -33,12 +33,22 @@ async fn embed_with_retry(
     #[derive(serde::Deserialize)]
     struct EmbedVals { values: Vec<f32> }
 
+    // Proactive throttle: jeda antar setiap embed call untuk hindari 429.
+    // Default 80ms ≈ 12 req/s (aman di bawah 1500 RPM = 25 req/s burst limit).
+    // Tunable via env: EMBED_DELAY_MS=0 untuk matikan, 150 untuk lebih lambat.
+    let delay_ms: u64 = std::env::var("EMBED_DELAY_MS")
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or(80);
+    if delay_ms > 0 {
+        sleep(std::time::Duration::from_millis(delay_ms)).await;
+    }
+
     let body = EmbedReq {
         content: EmbedContent { parts: vec![EmbedPart { text: text.to_string() }] },
         output_dimensionality: 768,
     };
 
-    let max_retries = 3u32;
+    let max_retries = 4u32;
     for attempt in 0..=max_retries {
         let resp = match http.post(embed_url)
             .header("x-goog-api-key", gemini_key)
@@ -58,12 +68,14 @@ async fn embed_with_retry(
 
         let status = resp.status();
 
-        // Retry-able transient errors
+        // Retry-able transient errors: 429 (rate limit) dan 503 (overload)
         if status.as_u16() == 429 || status.as_u16() == 503 {
             if attempt < max_retries {
-                let delay = std::time::Duration::from_millis(2000 * (1 << attempt));
-                eprintln!("[embed_retry] Gemini embed {status}, retry {}/{max_retries} after {}ms", attempt+1, delay.as_millis());
-                sleep(delay).await;
+                // Exponential backoff: 2s, 4s, 8s, 16s
+                let backoff = std::time::Duration::from_millis(2000 * (1 << attempt));
+                eprintln!("[embed_retry] Gemini embed {status}, retry {}/{max_retries} after {}ms",
+                    attempt + 1, backoff.as_millis());
+                sleep(backoff).await;
                 continue;
             }
             let msg = resp.text().await.unwrap_or_default();
