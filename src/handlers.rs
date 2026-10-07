@@ -1384,9 +1384,9 @@ pub async fn admin_ingest_url(
             .json(ApiError::new(422, "Konten terlalu pendek atau tidak bisa di-parse"));
     }
 
-    // 3. Chunk teks (setiap ~800 karakter, overlap ~100)
-    let chunk_size = 800usize;
-    let overlap    = 100usize;
+    // 3. Chunk teks (setiap ~1500 karakter, overlap ~150)
+    let chunk_size = 1500usize;
+    let overlap    = 150usize;
     let chars: Vec<char> = raw_text.chars().collect();
     let mut chunks_text: Vec<String> = Vec::new();
     let mut start = 0usize;
@@ -1499,8 +1499,8 @@ pub async fn admin_ingest_text(
         .build().unwrap();
 
     // Chunk
-    let chunk_size = 800usize;
-    let overlap    = 100usize;
+    let chunk_size = 1500usize;
+    let overlap    = 150usize;
     let chars: Vec<char> = raw_text.chars().collect();
     let mut chunks_text: Vec<String> = Vec::new();
     let mut start = 0usize;
