@@ -359,52 +359,65 @@ pub async fn update_password(
 
 /// Filter chunks hasil retrieval menjadi referensi yang benar-benar relevan.
 ///
+/// Untuk list/procedural queries: lebih longgar — chunk dari dokumen yang sama
+/// tetap dipertahankan karena semua diperlukan untuk jawaban lengkap.
+///
 /// Strategi (berurutan):
 /// 1. Score threshold  — buang chunk dengan score < min_score
 /// 2. Score gap        — potong jika ada drop > gap_ratio antara chunk berurutan
-/// 3. Dedup per source — satu source_url hanya muncul sekali (chunk terbaik)
-/// 4. Max cap          — paling banyak max_sources referensi
-fn filter_sources(
-    chunks: &[crate::db::SearchResult],
+///                       (DILEWATI untuk list/procedural: semua chunk dokumen relevan)
+/// 3. Dedup per source — satu source_url hanya muncul sekali di kartu referensi
+///                       (chunk terbaik per URL, tapi SEMUA dikirim ke LLM)
+/// 4. Max cap          — paling banyak max_sources referensi di kartu
+fn filter_sources<'a>(
+    chunks: &'a [crate::db::SearchResult],
+    query:       &str,
     min_score:   f64,
     gap_ratio:   f64,
     max_sources: usize,
-) -> Vec<&crate::db::SearchResult> {
+) -> Vec<&'a crate::db::SearchResult> {
+    use crate::rag::{RagEngine, QueryType};
+
     if chunks.is_empty() {
         return vec![];
     }
 
-    // 1. Score threshold
+    let query_type = RagEngine::classify_query(query);
+    let is_expand_query = matches!(query_type, QueryType::List | QueryType::Procedural);
+
+    // 1. Score threshold — lebih longgar untuk list/procedural
+    let effective_min = if is_expand_query { min_score * 0.6 } else { min_score };
     let above: Vec<&crate::db::SearchResult> = chunks.iter()
-        .filter(|c| c.score >= min_score)
+        .filter(|c| c.score >= effective_min)
         .collect();
 
     if above.is_empty() {
-        // Fallback: kembalikan chunk terbaik saja (daripada kosong)
         return vec![&chunks[0]];
     }
 
-    // 2. Score gap — cari titik drop pertama yang signifikan
-    let mut cutoff = above.len();
-    for i in 1..above.len() {
-        let prev = above[i - 1].score;
-        let curr = above[i].score;
-        if prev > 0.0 && (prev - curr) / prev > gap_ratio {
-            cutoff = i;
-            break;
+    // 2. Score gap — lewati untuk list/procedural
+    let filtered: Vec<&crate::db::SearchResult> = if is_expand_query {
+        above
+    } else {
+        let mut cutoff = above.len();
+        for i in 1..above.len() {
+            let prev = above[i - 1].score;
+            let curr = above[i].score;
+            if prev > 0.0 && (prev - curr) / prev > gap_ratio {
+                cutoff = i;
+                break;
+            }
         }
-    }
-    let filtered: Vec<&crate::db::SearchResult> = above[..cutoff].to_vec();
+        above[..cutoff].to_vec()
+    };
 
-    // 3. Dedup per source_url (ambil score tertinggi per URL)
+    // 3. Dedup per source_url untuk kartu referensi
+    //    Untuk list/procedural: kelompokkan per dokumen, ambil chunk pertama sebagai
+    //    representasi kartu — tapi semua chunk tetap masuk ke LLM via konteks.
     let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
     let deduped: Vec<&crate::db::SearchResult> = filtered.into_iter()
         .filter(|c| {
-            let key = if c.source_url.is_empty() {
-                c.title.clone()
-            } else {
-                c.source_url.clone()
-            };
+            let key = if c.source_url.is_empty() { c.title.clone() } else { c.source_url.clone() };
             seen_urls.insert(key)
         })
         .collect();
@@ -470,7 +483,7 @@ pub async fn ask(
 
     // 2. Filter DULU → hanya chunk yang akan ditampilkan sebagai kartu
     //    LLM akan menerima konteks yang sama persis → nomor [1]..[N] cocok
-    let relevant = filter_sources(&all_chunks, 0.40, 0.25, 6);
+    let relevant = filter_sources(&all_chunks, &body.query, 0.40, 0.25, 6);
 
     // 3. Panggil LLM dengan filtered chunks saja
     let answer = match state.rag.answer_with_chunks(
@@ -599,7 +612,7 @@ pub async fn ask_public(
     };
 
     // 2. Filter dulu → nomor konteks = nomor kartu sumber
-    let relevant = filter_sources(&all_chunks, 0.45, 0.25, 5);
+    let relevant = filter_sources(&all_chunks, &body.query, 0.45, 0.25, 5);
 
     // 3. LLM dengan filtered chunks
     let answer = match state.rag.answer_with_chunks(

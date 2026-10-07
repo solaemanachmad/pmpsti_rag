@@ -151,6 +151,19 @@ struct GeminiCandidate {
 }
 
 // ══════════════════════════════════════════════════════════════════
+//  QUERY TYPE
+// ══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum QueryType {
+    List,        // sebutkan semua, daftar, berapa jumlah
+    Procedural,  // bagaimana cara, langkah, syarat, prosedur
+    Comparison,  // bandingkan, perbedaan, vs
+    Definition,  // apa itu, jelaskan, pengertian
+    General,     // lainnya
+}
+
+// ══════════════════════════════════════════════════════════════════
 //  RAG ENGINE
 // ══════════════════════════════════════════════════════════════════
 
@@ -165,10 +178,56 @@ impl RagEngine {
         Self { search, llm, http: Client::new() }
     }
 
+    /// Klasifikasi tipe query untuk strategi retrieval yang tepat.
+    pub fn classify_query(query: &str) -> QueryType {
+        let q = query.to_lowercase();
+
+        // List: sebutkan semua, berapa jumlah, daftar...
+        let list_patterns = [
+            "sebutkan", "semua", "daftar", "list", "berapa jumlah",
+            "berapa banyak", "seluruh", "lengkap", "mitra", "semua mitra",
+            "apa saja", "siapa saja",
+        ];
+        if list_patterns.iter().any(|p| q.contains(p)) {
+            return QueryType::List;
+        }
+
+        // Procedural: bagaimana cara, langkah, prosedur, syarat, persyaratan...
+        let procedural_patterns = [
+            "bagaimana cara", "langkah", "prosedur", "syarat", "persyaratan",
+            "cara mendaftar", "cara", "tahapan", "alur", "mekanisme",
+            "tata cara", "ketentuan", "aturan", "bagaimana proses",
+        ];
+        if procedural_patterns.iter().any(|p| q.contains(p)) {
+            return QueryType::Procedural;
+        }
+
+        // Comparison: bandingkan, perbedaan, persamaan, vs...
+        let comparison_patterns = [
+            "bandingkan", "perbedaan", "persamaan", "vs", "versus",
+            "lebih baik", "mana yang", "dibanding", "beda antara",
+        ];
+        if comparison_patterns.iter().any(|p| q.contains(p)) {
+            return QueryType::Comparison;
+        }
+
+        // Definition: apa itu, definisi, pengertian, jelaskan...
+        let definition_patterns = [
+            "apa itu", "definisi", "pengertian", "jelaskan", "apakah",
+            "maksud dari", "arti", "apa yang dimaksud",
+        ];
+        if definition_patterns.iter().any(|p| q.contains(p)) {
+            return QueryType::Definition;
+        }
+
+        QueryType::General
+    }
+
     /// Cari chunks dengan strategi retrieval modern:
     /// 1. RRF (default) / semantic / keyword sesuai search_mode
-    /// 2. List-query detection → paksa fetch semua chunks dari matching docs
-    /// 3. Smart document expansion → expand doc multi-chunk yang ter-hit
+    /// 2. Query-type detection → fetch semua chunks untuk list/procedural
+    /// 3. Comparison → fetch dari top-N dokumen berbeda
+    /// 4. Smart document expansion → expand doc multi-chunk yang ter-hit
     pub async fn search_chunks(
         &self,
         query:           &str,
@@ -187,19 +246,12 @@ impl RagEngine {
             return Ok(vec![]);
         }
 
-        // ── List-query detection ─────────────────────────────────────
-        // Kalau query minta "semua / daftar / sebutkan / berapa jumlah",
-        // fetch semua chunks dari SEMUA dokumen yang ter-hit, bukan hanya top-k.
-        // Ini memastikan dokumen list (kerjasama, mata kuliah, dll) selalu lengkap.
-        let list_patterns = [
-            "sebutkan", "semua", "daftar", "list", "berapa jumlah",
-            "berapa banyak", "seluruh", "lengkap", "mitra", "semua mitra",
-        ];
-        let query_lower = query.to_lowercase();
-        let is_list_query = list_patterns.iter().any(|p| query_lower.contains(p));
+        let query_type = Self::classify_query(query);
 
-        if is_list_query {
-            // Kumpulkan semua document_id yang ter-hit
+        // ── List & Procedural: fetch semua chunks dari matching docs ─────
+        // List:       kerjasama, mata kuliah, dosen → harus lengkap semua entri
+        // Procedural: syarat masuk, cara daftar     → harus lengkap semua langkah
+        if matches!(query_type, QueryType::List | QueryType::Procedural) {
             let hit_doc_ids: Vec<String> = {
                 let mut seen = std::collections::HashSet::new();
                 initial_chunks.iter()
@@ -210,15 +262,13 @@ impl RagEngine {
                     })
                     .collect()
             };
-            // Fetch semua chunks dari dokumen-dokumen tersebut
             let mut all_chunks = self.search.db
                 .fetch_all_chunks_for_documents(&hit_doc_ids)
                 .await
                 .unwrap_or(initial_chunks);
-            // Deduplicate by (document_id, chunk_index)
             let mut seen_keys = std::collections::HashSet::new();
             all_chunks.retain(|c| seen_keys.insert((c.document_id.clone(), c.chunk_index)));
-            // Sort: dokumen yang skornya tinggi di depan, lalu by chunk_index
+            // Urut: skor tertinggi di depan, lalu per chunk_index (urutan asli)
             all_chunks.sort_by(|a, b| {
                 b.score.partial_cmp(&a.score)
                     .unwrap_or(std::cmp::Ordering::Equal)
@@ -227,7 +277,32 @@ impl RagEngine {
             return Ok(all_chunks);
         }
 
-        // ── Smart document expansion ─────────────────────────────────
+        // ── Comparison: pastikan minimal 2 dokumen berbeda ter-representasi ─
+        if matches!(query_type, QueryType::Comparison) {
+            // Ambil top-2 dokumen berbeda, fetch semua chunk dari masing-masing
+            let mut seen_docs = std::collections::HashSet::new();
+            let top_doc_ids: Vec<String> = initial_chunks.iter()
+                .filter(|c| !c.document_id.is_empty())
+                .filter_map(|c| {
+                    if seen_docs.insert(c.document_id.clone()) { Some(c.document_id.clone()) }
+                    else { None }
+                })
+                .take(2)
+                .collect();
+            if top_doc_ids.len() >= 2 {
+                let mut all_chunks = self.search.db
+                    .fetch_all_chunks_for_documents(&top_doc_ids)
+                    .await
+                    .unwrap_or(initial_chunks);
+                let mut seen_keys = std::collections::HashSet::new();
+                all_chunks.retain(|c| seen_keys.insert((c.document_id.clone(), c.chunk_index)));
+                all_chunks.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+                return Ok(all_chunks);
+            }
+            // Hanya 1 dokumen — lanjut ke smart expansion biasa
+        }
+
+        // ── Smart document expansion (General & Definition) ──────────────
         // Expand dokumen yang:
         // (a) 2+ chunks-nya ter-hit (dokumen sangat relevan), ATAU
         // (b) salah satu chunk-nya bukan chunk_index=0 (ada prefix yang belum diambil)
@@ -284,11 +359,28 @@ impl RagEngine {
 
         // Format context dari references
         let context = SearchEngine::format_context_refs(chunks);
+        let query_type = Self::classify_query(query);
         let system_prompt = build_system_prompt();
+
+        // Hint format jawaban berdasarkan tipe query
+        let format_hint = match query_type {
+            QueryType::List => "\n\nINSTRUKSI FORMAT: Query ini meminta daftar lengkap. \
+                Tampilkan SEMUA entri dalam format tabel Markdown (| No | Nama | ... |) \
+                atau numbered list. Jangan meringkas atau menghilangkan satu pun entri.",
+            QueryType::Procedural => "\n\nINSTRUKSI FORMAT: Query ini meminta prosedur/langkah. \
+                Tampilkan sebagai numbered list yang urut (1. 2. 3. dst). \
+                Jika ada syarat/ketentuan, tampilkan dulu sebelum langkah.",
+            QueryType::Comparison => "\n\nINSTRUKSI FORMAT: Query ini meminta perbandingan. \
+                Gunakan tabel Markdown untuk membandingkan aspek-aspek kunci secara berdampingan. \
+                Akhiri dengan ringkasan perbedaan utama.",
+            QueryType::Definition => "\n\nINSTRUKSI FORMAT: Query ini meminta definisi/penjelasan. \
+                Mulai dengan definisi singkat (1-2 kalimat), lalu elaborasi dengan poin-poin penting.",
+            QueryType::General => "",
+        };
 
         // Suggest klarifikasi jika hasil dari >= 3 kategori berbeda
         let categories: std::collections::HashSet<&str> = chunks.iter()
-            .map(|c| c.category.as_str())  // c: &&SearchResult → works fine
+            .map(|c| c.category.as_str())
             .filter(|c| !c.is_empty())
             .collect();
         let clarification_hint = if categories.len() >= 3 {
@@ -302,7 +394,8 @@ impl RagEngine {
             String::new()
         };
 
-        let user_message = build_user_message(query, &context, &clarification_hint);
+        let combined_hint = format!("{}{}", format_hint, clarification_hint);
+        let user_message = build_user_message(query, &context, combined_hint.trim());
 
         let mut messages: Vec<Message> = vec![
             Message { role: "system".to_string(), content: system_prompt.clone() },
@@ -434,13 +527,17 @@ fn build_system_prompt() -> String {
         studi secara langsung.\n\
      3. Untuk pertanyaan casual atau sapaan (contoh: apa kabar, halo, siapa kamu), jawab secara \
         natural dan ramah sebagai asisten akademik — tidak perlu merujuk dokumen.\n\
-     4. Jika konteks berisi daftar atau tabel (misal daftar mitra, jadwal, mata kuliah), WAJIB \
-        sebutkan SEMUA entri secara lengkap tanpa pengecualian — jangan meringkas atau hanya \
-        menyebut sebagian. Gunakan format tabel Markdown jika memungkinkan.\n\
-     5. Format jawaban menggunakan Markdown: **bold** untuk penekanan, tabel dengan | kolom |, \
+     4. DAFTAR/TABEL: Jika konteks berisi daftar (mitra, mata kuliah, dosen, dsb), WAJIB tampilkan \
+        SEMUA entri secara lengkap — jangan meringkas, jangan hanya sebagian. \
+        Gunakan tabel Markdown (| No | Nama | ... |) jika ada 3+ kolom data.\n\
+     5. PROSEDUR/LANGKAH: Jika pertanyaan tentang cara/syarat/prosedur, tampilkan sebagai \
+        numbered list yang urut dan lengkap. Jika ada prasyarat, sebutkan dulu.\n\
+     6. PERBANDINGAN: Jika pertanyaan membandingkan dua hal, gunakan tabel Markdown dengan \
+        aspek di baris dan objek di kolom.\n\
+     7. Format jawaban menggunakan Markdown: **bold** untuk penekanan, tabel dengan | kolom |, \
         daftar dengan - atau nomor. JANGAN tulis simbol ** atau | secara literal tanpa maksud \
         pemformatan.\n\
-     6. Jangan mengarang fakta akademik yang tidak ada di konteks."
+     8. Jangan mengarang fakta akademik yang tidak ada di konteks."
         .to_string()
 }
 fn build_user_message(query: &str, context: &str, clarification_hint: &str) -> String {
