@@ -178,59 +178,127 @@ impl RagEngine {
         Self { search, llm, http: Client::new() }
     }
 
-    /// Klasifikasi tipe query untuk strategi retrieval yang tepat.
-    pub fn classify_query(query: &str) -> QueryType {
+    /// Klasifikasi tipe query via Gemini (single-token response).
+    /// Fallback ke pattern-based jika LLM tidak tersedia atau gagal.
+    /// Dipanggil dengan `&self` karena butuh http client dan API key.
+    pub async fn classify_query(&self, query: &str) -> QueryType {
+        // Coba LLM classification dulu
+        if let Some(qt) = self.classify_query_llm(query).await {
+            return qt;
+        }
+        // Fallback ke pattern-based
+        Self::classify_query_patterns(query)
+    }
+
+    /// LLM-based classification via Gemini Flash (hemat, cepat).
+    /// Mengembalikan None jika API key tidak ada atau request gagal.
+    async fn classify_query_llm(&self, query: &str) -> Option<QueryType> {
+        let api_key = std::env::var("GEMINI_API_KEY").ok()?;
+
+        // Gunakan gemini-2.0-flash-lite — paling murah, cukup untuk klasifikasi
+        let model = "gemini-2.0-flash-lite";
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+            model
+        );
+
+        let prompt = format!(
+            "Klasifikasikan query berikut ke salah satu kategori. \
+             Jawab HANYA dengan satu kata dari pilihan ini: LIST, PROCEDURAL, COMPARISON, DEFINITION, GENERAL\n\n\
+             Panduan:\n\
+             - LIST: meminta daftar/enumerasi (semua mitra, daftar dosen, berapa jumlah, siapa saja)\n\
+             - PROCEDURAL: meminta langkah/cara/prosedur (cara daftar, syarat masuk, alur pendaftaran)\n\
+             - COMPARISON: meminta perbandingan (perbedaan antara, vs, mana yang lebih baik)\n\
+             - DEFINITION: meminta penjelasan/definisi (apa itu, jelaskan, pengertian, apakah)\n\
+             - GENERAL: pertanyaan faktual spesifik atau lainnya\n\n\
+             Query: \"{}\"\n\nJawab:",
+            query
+        );
+
+        #[derive(serde::Serialize)]
+        struct GeminiReq { contents: Vec<GContent> }
+        #[derive(serde::Serialize)]
+        struct GContent { parts: Vec<GPart> }
+        #[derive(serde::Serialize)]
+        struct GPart { text: String }
+        #[derive(serde::Deserialize)]
+        struct GeminiResp { candidates: Vec<GCandidate> }
+        #[derive(serde::Deserialize)]
+        struct GCandidate { content: GContentResp }
+        #[derive(serde::Deserialize)]
+        struct GContentResp { parts: Vec<GPartResp> }
+        #[derive(serde::Deserialize)]
+        struct GPartResp { text: String }
+
+        let body = GeminiReq {
+            contents: vec![GContent { parts: vec![GPart { text: prompt }] }],
+        };
+
+        let resp = self.http.post(&url)
+            .header("x-goog-api-key", &api_key)
+            .json(&body)
+            .send().await.ok()?;
+
+        if !resp.status().is_success() { return None; }
+
+        let data: GeminiResp = resp.json().await.ok()?;
+        let raw = data.candidates.first()?
+            .content.parts.first()?
+            .text.trim().to_uppercase();
+
+        // Parse single-word response
+        let qt = match raw.as_str() {
+            "LIST"        => QueryType::List,
+            "PROCEDURAL"  => QueryType::Procedural,
+            "COMPARISON"  => QueryType::Comparison,
+            "DEFINITION"  => QueryType::Definition,
+            "GENERAL"     => QueryType::General,
+            // LLM kadang balas dengan kata lebih → cek prefix
+            _ if raw.starts_with("LIST")       => QueryType::List,
+            _ if raw.starts_with("PROCEDURAL") => QueryType::Procedural,
+            _ if raw.starts_with("COMPARISON") => QueryType::Comparison,
+            _ if raw.starts_with("DEFINITION") => QueryType::Definition,
+            _                                  => QueryType::General,
+        };
+
+        Some(qt)
+    }
+
+    /// Pattern-based classification — fallback jika LLM tidak tersedia.
+    pub fn classify_query_patterns(query: &str) -> QueryType {
         let q = query.to_lowercase();
 
-        // List: sebutkan semua, berapa jumlah, daftar...
         let list_patterns = [
             "sebutkan", "semua", "daftar", "list", "berapa jumlah",
             "berapa banyak", "seluruh", "lengkap", "mitra", "semua mitra",
-            "apa saja", "siapa saja",
-            // variasi tanpa "berapa" di depan
-            "jumlah", "total", "kerjasama",
+            "apa saja", "siapa saja", "jumlah", "total", "kerjasama",
         ];
-        if list_patterns.iter().any(|p| q.contains(p)) {
-            return QueryType::List;
-        }
+        if list_patterns.iter().any(|p| q.contains(p)) { return QueryType::List; }
 
-        // Procedural: bagaimana cara, langkah, prosedur, syarat, persyaratan...
         let procedural_patterns = [
             "bagaimana cara", "langkah", "prosedur", "syarat", "persyaratan",
             "cara mendaftar", "cara", "tahapan", "alur", "mekanisme",
             "tata cara", "ketentuan", "aturan", "bagaimana proses",
         ];
-        if procedural_patterns.iter().any(|p| q.contains(p)) {
-            return QueryType::Procedural;
-        }
+        if procedural_patterns.iter().any(|p| q.contains(p)) { return QueryType::Procedural; }
 
-        // Comparison: bandingkan, perbedaan, persamaan, vs...
         let comparison_patterns = [
             "bandingkan", "perbedaan", "persamaan", "vs", "versus",
             "lebih baik", "mana yang", "dibanding", "beda antara",
         ];
-        if comparison_patterns.iter().any(|p| q.contains(p)) {
-            return QueryType::Comparison;
-        }
+        if comparison_patterns.iter().any(|p| q.contains(p)) { return QueryType::Comparison; }
 
-        // Definition: apa itu, definisi, pengertian, jelaskan...
         let definition_patterns = [
             "apa itu", "definisi", "pengertian", "jelaskan", "apakah",
             "maksud dari", "arti", "apa yang dimaksud",
         ];
-        if definition_patterns.iter().any(|p| q.contains(p)) {
-            return QueryType::Definition;
-        }
+        if definition_patterns.iter().any(|p| q.contains(p)) { return QueryType::Definition; }
 
-        // Person/fact query: pertanyaan tentang orang, jabatan, gelar, status
-        // → treat as List agar fetch semua chunk dari dokumen yang relevan
         let person_patterns = [
             "prof", "profesor", "guru besar", "jabatan", "gelar",
             "siapa", "dosen", "pengajar", "lektor", "tenaga pendidik",
         ];
-        if person_patterns.iter().any(|p| q.contains(p)) {
-            return QueryType::List;
-        }
+        if person_patterns.iter().any(|p| q.contains(p)) { return QueryType::List; }
 
         QueryType::General
     }
@@ -258,7 +326,7 @@ impl RagEngine {
             return Ok(vec![]);
         }
 
-        let query_type = Self::classify_query(query);
+        let query_type = self.classify_query(query).await;
 
         // ── List & Procedural: fetch semua chunks dari matching docs ─────
         // List:       kerjasama, mata kuliah, dosen → harus lengkap semua entri
@@ -371,7 +439,7 @@ impl RagEngine {
 
         // Format context dari references
         let context = SearchEngine::format_context_refs(chunks);
-        let query_type = Self::classify_query(query);
+        let query_type = self.classify_query(query).await;
         let system_prompt = build_system_prompt();
 
         // Hint format jawaban berdasarkan tipe query

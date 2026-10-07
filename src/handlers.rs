@@ -638,7 +638,7 @@ fn filter_sources<'a>(
         return vec![];
     }
 
-    let query_type = RagEngine::classify_query(query);
+    let query_type = RagEngine::classify_query_patterns(query);
     let is_expand_query = matches!(query_type, QueryType::List | QueryType::Procedural);
 
     // 1. Score threshold — lebih longgar untuk list/procedural
