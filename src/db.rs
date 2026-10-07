@@ -9,6 +9,7 @@ use sqlx::{PgPool, Row};
 
 #[derive(Debug, Clone)]
 pub struct SearchResult {
+    pub document_id:  String,
     pub title:        String,
     pub content:      String,
     pub snippet:      String,   // extracted window, siap tampil ke user
@@ -337,7 +338,7 @@ impl Database {
         let vec = Vector::from(query_embedding);
 
         let rows = sqlx::query(
-            "SELECT title, content, category, subcategory,
+            "SELECT document_id, title, content, category, subcategory,
                     COALESCE(source_url, '') AS source_url,
                     page_number, chunk_index,
                     COALESCE(1.0 - (embedding <=> $1), 0.0) AS score
@@ -369,7 +370,7 @@ impl Database {
         let vec = Vector::from(query_embedding);
 
         let rows = sqlx::query(
-            "SELECT title, content, category, subcategory,
+            "SELECT document_id, title, content, category, subcategory,
                     COALESCE(source_url, '') AS source_url,
                     page_number, chunk_index,
                     (
@@ -405,7 +406,7 @@ impl Database {
         category_filter: Option<&str>,
     ) -> Result<Vec<SearchResult>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT title, content, category, subcategory,
+            "SELECT document_id, title, content, category, subcategory,
                     COALESCE(source_url, '') AS source_url,
                     page_number, chunk_index,
                     ts_rank(
@@ -1204,6 +1205,7 @@ fn rows_to_results(rows: Vec<sqlx::postgres::PgRow>) -> Vec<SearchResult> {
         .map(|row| {
             let content: String = row.get("content");
             SearchResult {
+                document_id: row.try_get("document_id").unwrap_or_default(),
                 title:       row.get("title"),
                 snippet:     truncate_at_sentence(&content, 400),
                 content,
@@ -1505,6 +1507,36 @@ impl Database {
         .await
         .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
+    }
+
+    // ── Document expansion: fetch all chunks for a set of document_ids ─────────
+
+    pub async fn fetch_all_chunks_for_documents(
+        &self,
+        document_ids: &[String],
+    ) -> Result<Vec<SearchResult>, sqlx::Error> {
+        if document_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        // Build $1, $2, $3, ... placeholders
+        let placeholders: Vec<String> = (1..=document_ids.len())
+            .map(|i| format!("${}", i))
+            .collect();
+        let sql = format!(
+            "SELECT document_id, title, content, category, subcategory,
+                    COALESCE(source_url, '') AS source_url,
+                    page_number, chunk_index, 1.0::float8 AS score
+             FROM documents
+             WHERE document_id = ANY(ARRAY[{}]::text[])
+             ORDER BY document_id, chunk_index",
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query(&sql);
+        for id in document_ids {
+            q = q.bind(id);
+        }
+        let rows = q.fetch_all(&self.pool).await?;
+        Ok(rows_to_results(rows))
     }
 
     // ── Chunk-level operations ────────────────────────────────────────────────
