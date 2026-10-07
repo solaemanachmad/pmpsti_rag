@@ -1207,7 +1207,11 @@ fn rows_to_results(rows: Vec<sqlx::postgres::PgRow>) -> Vec<SearchResult> {
             SearchResult {
                 document_id: row.try_get("document_id").unwrap_or_default(),
                 title:       row.get("title"),
-                snippet:     truncate_at_sentence(&content, 400),
+                snippet:     {
+                    let cleaned = clean_snippet(&content);
+                    if cleaned.is_empty() { cleaned }
+                    else { truncate_at_sentence(&cleaned, 400) }
+                },
                 content,
                 category:    row.get("category"),
                 subcategory: row.get("subcategory"),
@@ -1236,6 +1240,24 @@ fn row_to_user(row: &sqlx::postgres::PgRow) -> User {
 
 /// Truncate string di batas kalimat (. ! ?) terdekat sebelum max_chars.
 /// Fallback ke hard cut jika tidak ada batas kalimat.
+/// Bersihkan snippet dari konten JS/CSS yang tidak berguna sebelum ditampilkan ke user.
+/// Jika konten terdeteksi sebagai JS/CSS (bukan teks natural), kembalikan string kosong.
+fn clean_snippet(text: &str) -> String {
+    let trimmed = text.trim();
+    // Deteksi pola JS/CSS yang khas dari Quarto/Bootstrap
+    let js_indicators = [
+        "const ", "function ", "var ", "let ", "=>", "document.querySelector",
+        "window.", "classList.", "getAttribute(", "getElementById",
+        "addEventListener(", "toggleBodyColor", "bsSheetEl",
+    ];
+    let first_200: String = trimmed.chars().take(200).collect();
+    let is_js = js_indicators.iter().any(|pat| first_200.contains(pat));
+    if is_js {
+        return String::new(); // kosongkan — jangan tampilkan JS ke user
+    }
+    trimmed.to_string()
+}
+
 fn truncate_at_sentence(text: &str, max_chars: usize) -> String {
     let char_count = text.chars().count();
     if char_count <= max_chars {

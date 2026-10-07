@@ -218,7 +218,28 @@ impl RagEngine {
 
         let context = SearchEngine::format_context(&chunks);
         let system_prompt = build_system_prompt();
-        let user_message  = build_user_message(query, &context);
+
+        // Deteksi apakah hasil mencakup banyak kategori berbeda
+        // Jika iya, tambahkan instruksi agar AI menawarkan klarifikasi
+        let categories: std::collections::HashSet<&str> = chunks.iter()
+            .map(|c| c.category.as_str())
+            .filter(|c| !c.is_empty())
+            .collect();
+        let clarification_hint = if categories.len() >= 3 {
+            let cat_list: Vec<&str> = categories.into_iter().collect();
+            format!(
+                "\n\nCATATAN: Hasil pencarian mencakup {} kategori berbeda: {}. \
+                 Jika pertanyaan pengguna ambigu, jawab sebaik mungkin LALU di akhir \
+                 tawarkan klarifikasi dengan kalimat seperti: \
+                 \"Apakah Anda bertanya tentang [pilihan A] atau [pilihan B]?\"",
+                cat_list.len(),
+                cat_list.join(", ")
+            )
+        } else {
+            String::new()
+        };
+
+        let user_message = build_user_message(query, &context, &clarification_hint);
 
         let mut messages: Vec<Message> = vec![
             Message { role: "system".to_string(), content: system_prompt.clone() },
@@ -359,13 +380,13 @@ fn build_system_prompt() -> String {
      6. Jangan mengarang fakta akademik yang tidak ada di konteks."
         .to_string()
 }
-fn build_user_message(query: &str, context: &str) -> String {
+fn build_user_message(query: &str, context: &str, clarification_hint: &str) -> String {
     format!(
         "Konteks dari dokumen:\n\
          ─────────────────────\n\
          {context}\n\
          ─────────────────────\n\
-         \n\
+         {clarification_hint}\n\
          Pertanyaan: {query}"
     )
 }
