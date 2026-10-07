@@ -62,9 +62,20 @@
   $: isAdminPage = $page.url.pathname === '/admin'   || $page.url.pathname.startsWith('/admin/');
   $: isProfile   = $page.url.pathname === '/profile' || $page.url.pathname.startsWith('/profile/');
 
-  const navBase   = 'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors';
-  $: navActive = dark ? 'bg-white/15 text-white' : 'bg-white/20 text-white font-semibold';
-  $: navIdle   = dark ? 'text-white/70 hover:text-white hover:bg-white/10' : 'text-white/80 hover:text-white hover:bg-white/15';
+  // ── Warna tema UGM/PMPSTI ───────────────────────────────────────────────
+  // Light: navy utama #0B2545, aksen gold #C99A2E
+  // Dark : navy-panel #14213D, aksen gold terang #E3B54F
+  const navBase = 'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors';
+
+  // Nav active: gold tint background
+  $: navActive = dark
+    ? 'bg-[rgba(227,181,79,0.18)] text-[#E3B54F]'
+    : 'bg-[rgba(201,154,46,0.18)] text-[#F7EFDA] font-semibold';
+
+  // Nav idle: white with opacity
+  $: navIdle = dark
+    ? 'text-white/65 hover:text-white hover:bg-white/10'
+    : 'text-white/75 hover:text-white hover:bg-white/12';
 
   const mobileBase   = 'flex items-center gap-2.5 px-3 py-2.5 rounded-md text-sm transition-colors';
   const mobileActive = 'bg-accent/20 text-foreground font-medium';
@@ -82,8 +93,11 @@
   <div class="flex flex-col h-screen overflow-hidden bg-background">
 
     <!-- ── Topbar ── -->
-    <header class="h-14 flex items-center px-4 gap-4 shrink-0 z-40 border-b transition-colors
-      {dark ? 'bg-[#002147] text-white border-white/10' : 'bg-[#0055A5] text-white border-blue-700/30'}">
+    <!-- Light: #0B2545 (UGM navy utama) | Dark: #14213D (UGM navy-panel gelap) -->
+    <header class="h-14 flex items-center px-4 gap-4 shrink-0 z-40 border-b transition-colors duration-200
+      {dark
+        ? 'bg-[#14213D] text-[#EDEDED] border-[#3A4B66]'
+        : 'bg-[#0B2545] text-white border-[#163A67]'}">
 
       <a href="/chat" class="flex items-center gap-2.5 shrink-0 mr-2">
         <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-8 w-auto" />
@@ -107,19 +121,23 @@
       <div class="flex-1"></div>
 
       <div class="hidden md:flex items-center gap-1">
+        <!-- Toggle dark/light -->
         <button on:click={toggleDark}
           class="p-2 rounded-md transition-colors
-            {dark ? 'text-white/70 hover:text-white hover:bg-white/10' : 'text-white/80 hover:text-white hover:bg-white/15'}"
+            {dark
+              ? 'text-[#E3B54F]/80 hover:text-[#E3B54F] hover:bg-[rgba(227,181,79,0.12)]'
+              : 'text-white/70 hover:text-white hover:bg-white/10'}"
           title={dark ? 'Light mode' : 'Dark mode'}>
           {#if dark}<Sun size={16} />{:else}<Moon size={16} />{/if}
         </button>
 
+        <!-- User dropdown -->
         <div class="relative">
           <button on:click={() => userDropdown = !userDropdown}
             class="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-colors
               {dark
-                ? `text-white/70 hover:text-white hover:bg-white/10 ${isProfile ? 'bg-white/15 text-white' : ''}`
-                : `text-white/80 hover:text-white hover:bg-white/15 ${isProfile ? 'bg-white/20 text-white' : ''}`}">
+                ? `text-white/65 hover:text-white hover:bg-white/10 ${isProfile ? 'bg-[rgba(227,181,79,0.15)] text-[#E3B54F]' : ''}`
+                : `text-white/75 hover:text-white hover:bg-white/12 ${isProfile ? 'bg-[rgba(201,154,46,0.18)] text-[#F7EFDA]' : ''}`}">
             <User size={15} />
             <span class="max-w-[120px] truncate">{$currentUser?.display_name || $currentUser?.email || 'Akun'}</span>
             <ChevronDown size={13} class="opacity-60" />
@@ -143,9 +161,10 @@
         </div>
       </div>
 
+      <!-- Mobile hamburger -->
       <button on:click={() => menuOpen = !menuOpen}
         class="md:hidden p-1.5 rounded-md transition-colors
-          {dark ? 'text-white/70 hover:text-white hover:bg-white/10' : 'text-white/80 hover:text-white hover:bg-white/15'}">
+          {dark ? 'text-white/65 hover:text-white hover:bg-white/10' : 'text-white/75 hover:text-white hover:bg-white/12'}">
         {#if menuOpen}<X size={20} />{:else}<Menu size={20} />{/if}
       </button>
     </header>
