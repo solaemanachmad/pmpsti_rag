@@ -152,6 +152,15 @@ pub struct IngestUrlRequest {
     pub subcategory: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct IngestTextRequest {
+    pub content:     String,
+    pub title:       String,
+    pub source_url:  Option<String>,
+    pub category:    Option<String>,
+    pub subcategory: Option<String>,
+}
+
 
 #[derive(Debug, Serialize)]
 pub struct IngestResponse {

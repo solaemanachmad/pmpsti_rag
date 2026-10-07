@@ -1477,3 +1477,116 @@ pub async fn admin_ingest_url(
     }
 }
 
+/// Ingest plain text content directly (no URL fetching / Playwright needed).
+pub async fn admin_ingest_text(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    body:  web::Json<crate::models::IngestTextRequest>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+
+    let raw_text = body.content.trim().to_string();
+    if raw_text.len() < 10 {
+        return HttpResponse::BadRequest().json(ApiError::new(400, "Content terlalu pendek"));
+    }
+
+    let http = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (compatible; PMPSTI-Bot/1.0)")
+        .timeout(std::time::Duration::from_secs(30))
+        .build().unwrap();
+
+    // Chunk
+    let chunk_size = 800usize;
+    let overlap    = 100usize;
+    let chars: Vec<char> = raw_text.chars().collect();
+    let mut chunks_text: Vec<String> = Vec::new();
+    let mut start = 0usize;
+    while start < chars.len() {
+        let end = (start + chunk_size).min(chars.len());
+        chunks_text.push(chars[start..end].iter().collect());
+        if end >= chars.len() { break; }
+        start += chunk_size.saturating_sub(overlap);
+    }
+
+    let gemini_key = match std::env::var("GEMINI_API_KEY") {
+        Ok(k) => k,
+        Err(_) => return HttpResponse::InternalServerError()
+            .json(ApiError::new(500, "GEMINI_API_KEY tidak dikonfigurasi")),
+    };
+
+    let embed_url  = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
+    let title      = body.title.clone();
+    let source_url = body.source_url.clone().unwrap_or_else(|| "manual".to_string());
+    let category   = body.category.clone().unwrap_or_else(|| "Umum".to_string());
+    let subcategory= body.subcategory.clone().unwrap_or_else(|| "—".to_string());
+    let document_id= format!("text-{}", uuid::Uuid::new_v4());
+
+    let mut doc_chunks: Vec<DocumentChunk> = Vec::new();
+
+    for (i, chunk_text) in chunks_text.iter().enumerate() {
+        #[derive(serde::Serialize)]
+        struct EmbedReq { content: EmbedContent, #[serde(rename="outputDimensionality")] output_dimensionality: u32 }
+        #[derive(serde::Serialize)]
+        struct EmbedContent { parts: Vec<EmbedPart> }
+        #[derive(serde::Serialize)]
+        struct EmbedPart { text: String }
+        #[derive(serde::Deserialize)]
+        struct EmbedResp { embedding: EmbedVals }
+        #[derive(serde::Deserialize)]
+        struct EmbedVals { values: Vec<f32> }
+
+        let embed_body = EmbedReq {
+            content: EmbedContent { parts: vec![EmbedPart { text: chunk_text.clone() }] },
+            output_dimensionality: 768,
+        };
+
+        let resp = match http.post(embed_url)
+            .header("x-goog-api-key", &gemini_key)
+            .json(&embed_body)
+            .send().await
+        {
+            Ok(r) => r,
+            Err(e) => return HttpResponse::BadGateway()
+                .json(ApiError::new(502, format!("Embed error chunk {i}: {e}"))),
+        };
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let msg    = resp.text().await.unwrap_or_default();
+            return HttpResponse::BadGateway()
+                .json(ApiError::new(502, format!("Gemini embed {status}: {msg}")));
+        }
+
+        let embed_data: EmbedVals = match resp.json::<EmbedResp>().await {
+            Ok(d) => d.embedding,
+            Err(e) => return HttpResponse::InternalServerError()
+                .json(ApiError::new(500, format!("Parse embed: {e}"))),
+        };
+
+        doc_chunks.push(DocumentChunk {
+            document_id:   document_id.clone(),
+            title:         title.clone(),
+            content:       chunk_text.clone(),
+            source_url:    source_url.clone(),
+            category:      category.clone(),
+            subcategory:   subcategory.clone(),
+            document_type: "text".to_string(),
+            chunk_index:   i as i32,
+            embedding:     embed_data.values,
+        });
+    }
+
+    match state.db.insert_document_chunks(&doc_chunks).await {
+        Ok(n) => HttpResponse::Ok().json(ApiSuccess::new(IngestResponse {
+            document_id,
+            chunks: n,
+            title,
+        })),
+        Err(e) => HttpResponse::InternalServerError()
+            .json(ApiError::new(500, format!("DB error: {e}"))),
+    }
+}
+
