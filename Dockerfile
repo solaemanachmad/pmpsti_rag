@@ -1,20 +1,13 @@
 # ── Stage 1: Builder ──────────────────────────────────────────────
-# ubuntu:24.04 ships glibc 2.39
-FROM ubuntu:24.04 AS builder
-
-ENV DEBIAN_FRONTEND=noninteractive
+FROM rust:1.88-slim AS builder
 
 RUN apt-get update && apt-get install -y \
-    curl \
     pkg-config \
     libssl-dev \
+    libopenblas-dev \
     cmake \
     g++ \
     && rm -rf /var/lib/apt/lists/*
-
-# Install Rust 1.88 via rustup
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.88.0 --profile minimal
-ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /app
 
@@ -29,45 +22,30 @@ COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────
-FROM ubuntu:24.04
-
-ENV DEBIAN_FRONTEND=noninteractive
+FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
-    chromium-browser \
-    fonts-liberation \
-    libnss3 \
-    libatk-bridge2.0-0 \
-    libgtk-3-0 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2t64 \
-    nodejs \
-    npm \
+    libopenblas0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright tanpa download browser (pakai chromium-browser system)
-RUN npm install -g playwright@1.49.0 && \
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g playwright@1.49.0
+# Create non-root user
+RUN useradd -m -u 1000 appuser
 
 WORKDIR /app
 COPY --from=builder /app/target/release/pmpsti ./pmpsti
 
-RUN chown -R ubuntu:ubuntu /app
-USER ubuntu
+# Fastembed model cache directory
+RUN mkdir -p /app/.cache && chown appuser:appuser /app/.cache
 
-ENV CHROMIUM_BIN=/usr/bin/chromium-browser
-# Playwright pakai chromium system — tidak perlu download browser sendiri
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+RUN chown appuser:appuser /app/pmpsti
+USER appuser
 
 EXPOSE 7860
 
 ENV HOST=0.0.0.0
 ENV PORT=7860
+ENV FASTEMBED_CACHE_PATH=/app/.cache
 
 CMD ["./pmpsti"]
