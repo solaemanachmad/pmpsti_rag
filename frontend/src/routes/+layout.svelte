@@ -46,7 +46,7 @@
   async function logout() {
     try { await auth.logout(); } catch { /* tetap logout meski gagal */ }
     authStore.logout();
-    goto('/login');
+    goto('/');
   }
 
   $: isPublic    = publicRoutes.includes($page.url.pathname);

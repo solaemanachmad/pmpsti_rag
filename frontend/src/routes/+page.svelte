@@ -48,6 +48,7 @@
     sources?: SourceRef[];
   }
 
+  let dark = false;
   let messages: Message[] = [];
   let query = '';
   let streamingText = '';
@@ -66,9 +67,17 @@
 
   onMount(() => {
     if ($isLoggedIn) { goto('/chat'); return; }
+    dark = document.documentElement.classList.contains('dark');
     questionsUsed = getQuestionsUsed();
     questionsLeft = Math.max(GUEST_QUOTA - questionsUsed, 0);
     if (questionsLeft === 0) quotaExceeded = true;
+
+    // Sync dark state saat ThemeToggle mengubah kelas
+    const observer = new MutationObserver(() => {
+      dark = document.documentElement.classList.contains('dark');
+    });
+    observer.observe(document.documentElement, { attributeFilter: ['class'] });
+    return () => observer.disconnect();
   });
 
   async function scrollBottom() {
@@ -136,26 +145,33 @@
 <div class="min-h-screen flex flex-col bg-background">
 
   <!-- ── Header ── -->
-  <header class="border-b bg-[#002147] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-30">
+  <!-- Light: #E7ECF3 (ugm-navy-100) | Dark: #14213D (ugm-ink) — sama dengan header authenticated -->
+  <header class="border-b px-4 py-3 flex items-center justify-between sticky top-0 z-30 transition-colors duration-200
+    {dark ? 'bg-[#14213D] text-[#EDEDED] border-[#3A4B66]' : 'bg-[#E7ECF3] text-[#0B2545] border-[#C5D0DE]'}">
     <div class="flex items-center gap-3">
-      <img src="/ugm-logo-white.png" alt="Logo UGM" class="h-11 w-auto shrink-0" />
+      <img
+        src={dark ? '/ugm-logo-white.png' : '/ugm-logo-navy.png'}
+        alt="Logo UGM"
+        class="h-9 w-auto shrink-0"
+        onerror="this.src='/ugm-logo-white.png'"
+      />
       <div class="leading-tight">
         <div class="font-bold text-base tracking-wide">DTETI</div>
-        <div class="text-[11px] text-white/60">Teknik Elektro & Teknologi Informasi UGM</div>
+        <div class="text-[11px] {dark ? 'text-[#EDEDED]/60' : 'text-[#0B2545]/60'}">Teknik Elektro & Teknologi Informasi UGM</div>
       </div>
     </div>
     <nav class="flex items-center gap-1.5">
-      <ThemeToggle onDark={true} />
+      <ThemeToggle onDark={dark} />
       <a href="/login"
-        class="flex items-center gap-1.5 text-sm text-white/80 hover:text-white hover:bg-white/10
-               px-3 py-1.5 rounded-lg transition-colors font-medium">
+        class="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-colors font-medium
+          {dark ? 'text-[#EDEDED]/80 hover:text-[#EDEDED] hover:bg-white/10' : 'text-[#0B2545]/70 hover:text-[#0B2545] hover:bg-[#0B2545]/8'}">
         <LogIn size={14} />
         <span class="hidden sm:inline">Masuk</span>
       </a>
       <a href="/register"
         class="flex items-center gap-1.5 text-sm font-semibold
-               bg-[#F5A623] text-[#002147] px-3 py-1.5 rounded-lg
-               hover:brightness-105 transition-all">
+               bg-[#C99A2E] text-white px-3 py-1.5 rounded-lg
+               hover:brightness-105 transition-all dark:bg-[#E3B54F] dark:text-[#0B2545]">
         <UserPlus size={14} />
         <span>Daftar</span>
       </a>

@@ -41,9 +41,10 @@
     <!-- Branding -->
     <div class="flex flex-col items-center gap-3 mb-8">
       <picture>
-          <source srcset="/ugm-logo-white.png" media="(prefers-color-scheme: dark)" />
-          <img src="/ugm-logo-blue.png" alt="Logo UGM" class="w-16 h-16" />
-        </picture>
+        <source srcset="/ugm-logo-white.png" media="(prefers-color-scheme: dark)" />
+        <img src="/ugm-logo-navy.png" alt="Logo UGM" class="w-16 h-16"
+             onerror="this.src='/ugm-logo-white.png'" />
+      </picture>
       <div class="text-center">
         <div class="font-bold text-lg text-foreground">PMPSTI</div>
         <div class="text-xs text-muted-foreground">Asisten Akademik — Universitas Gadjah Mada</div>
