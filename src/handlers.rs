@@ -450,8 +450,8 @@ pub async fn ask(
         crate::rag::Message { role: m.role.clone(), content: m.content.clone() }
     }).collect();
 
-    let search_mode = body.search_mode.as_deref().unwrap_or("hybrid");
-    let top_k       = body.top_k.unwrap_or(10); // fetch lebih banyak, filter di filter_sources  // fetch lebih banyak, lalu filter
+    let search_mode = body.search_mode.as_deref().unwrap_or("rrf");
+    let top_k       = body.top_k.unwrap_or(10); // fetch lebih banyak, filter di filter_sources
     let cat_filter  = body.category_filter.as_deref();
 
     let start = std::time::Instant::now();
@@ -581,7 +581,7 @@ pub async fn ask_public(
             .json(ApiError::new(400, "Query tidak boleh kosong"));
     }
 
-    let search_mode = body.search_mode.as_deref().unwrap_or("hybrid");
+    let search_mode = body.search_mode.as_deref().unwrap_or("rrf");
     let top_k       = body.top_k.unwrap_or(5);
 
     let start = std::time::Instant::now();
@@ -1384,9 +1384,9 @@ pub async fn admin_ingest_url(
             .json(ApiError::new(422, "Konten terlalu pendek atau tidak bisa di-parse"));
     }
 
-    // 3. Chunk teks (setiap ~1500 karakter, overlap ~150)
-    let chunk_size = 1500usize;
-    let overlap    = 150usize;
+    // 3. Chunk teks (setiap ~800 karakter, overlap ~100)
+    let chunk_size = 800usize;
+    let overlap    = 100usize;
     let chars: Vec<char> = raw_text.chars().collect();
     let mut chunks_text: Vec<String> = Vec::new();
     let mut start = 0usize;
@@ -1499,8 +1499,8 @@ pub async fn admin_ingest_text(
         .build().unwrap();
 
     // Chunk
-    let chunk_size = 1500usize;
-    let overlap    = 150usize;
+    let chunk_size = 800usize;
+    let overlap    = 100usize;
     let chars: Vec<char> = raw_text.chars().collect();
     let mut chunks_text: Vec<String> = Vec::new();
     let mut start = 0usize;

@@ -97,6 +97,19 @@ impl SearchEngine {
         Ok(results)
     }
 
+    // ── Reciprocal Rank Fusion ──
+    pub async fn search_rrf(
+        &self,
+        query:           &str,
+        limit:           i64,
+        category_filter: Option<&str>,
+    ) -> Result<Vec<SearchResult>, anyhow::Error> {
+        let embedding = self.embed_query(query).await?;
+        let mut results = self.db.search_rrf(query, embedding, limit, category_filter).await?;
+        self.enrich_snippets(&mut results, query);
+        Ok(results)
+    }
+
     // ── Pure fulltext ──
     pub async fn search_keyword(
         &self,
