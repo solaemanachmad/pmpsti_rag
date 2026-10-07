@@ -152,15 +152,6 @@ pub struct IngestUrlRequest {
     pub subcategory: Option<String>,
 }
 
-/// Ingest teks langsung tanpa scraping URL (berguna untuk CSV/data terstruktur)
-#[derive(Debug, Deserialize)]
-pub struct IngestTextRequest {
-    pub title:       String,
-    pub content:     String,          // teks lengkap, akan di-chunk otomatis
-    pub source_url:  Option<String>,  // URL referensi (opsional)
-    pub category:    Option<String>,
-    pub subcategory: Option<String>,
-}
 
 #[derive(Debug, Serialize)]
 pub struct IngestResponse {
