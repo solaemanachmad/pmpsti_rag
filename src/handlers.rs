@@ -450,7 +450,7 @@ pub async fn ask(
     }).collect();
 
     let search_mode = body.search_mode.as_deref().unwrap_or("hybrid");
-    let top_k       = body.top_k.unwrap_or(10); // fetch lebih banyak, filter di filter_sources  // fetch lebih banyak, lalu filter
+    let top_k       = body.top_k.unwrap_or(15); // fetch lebih banyak untuk tabel/list panjang
     let cat_filter  = body.category_filter.as_deref();
 
     let start = std::time::Instant::now();
@@ -570,7 +570,7 @@ pub async fn ask_public(
     }
 
     let search_mode = body.search_mode.as_deref().unwrap_or("hybrid");
-    let top_k       = body.top_k.unwrap_or(5);
+    let top_k       = body.top_k.unwrap_or(15);
 
     let start = std::time::Instant::now();
 
