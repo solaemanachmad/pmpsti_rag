@@ -225,7 +225,7 @@ impl RagEngine {
         // Person/fact query: pertanyaan tentang orang, jabatan, gelar, status
         // → treat as List agar fetch semua chunk dari dokumen yang relevan
         let person_patterns = [
-            "profesor", "guru besar", "jabatan", "gelar",
+            "prof", "profesor", "guru besar", "jabatan", "gelar",
             "siapa", "dosen", "pengajar", "lektor", "tenaga pendidik",
         ];
         if person_patterns.iter().any(|p| q.contains(p)) {
