@@ -34,11 +34,11 @@ async fn embed_with_retry(
     struct EmbedVals { values: Vec<f32> }
 
     // Proactive throttle: jeda antar setiap embed call untuk hindari 429.
-    // Default 80ms ≈ 12 req/s (aman di bawah 1500 RPM = 25 req/s burst limit).
-    // Tunable via env: EMBED_DELAY_MS=0 untuk matikan, 150 untuk lebih lambat.
+    // gemini-embedding-001 free tier = 100 RPM → aman di 700ms (≈85 req/menit).
+    // Tunable via env EMBED_DELAY_MS: 0=off (jika pakai tier berbayar), 700=default.
     let delay_ms: u64 = std::env::var("EMBED_DELAY_MS")
         .ok().and_then(|v| v.parse().ok())
-        .unwrap_or(80);
+        .unwrap_or(700);
     if delay_ms > 0 {
         sleep(std::time::Duration::from_millis(delay_ms)).await;
     }
