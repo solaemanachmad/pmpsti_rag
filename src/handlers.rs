@@ -1936,13 +1936,18 @@ pub async fn admin_ingest_url(
     };
     let embed_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
 
-    // Chunking — strategy dipilih dari request body (default: sentence, 0 Gemini quota saat chunking)
+    // Chunking — strategy dipilih dari request body (default: auto-detect)
     let min_chars = chunk_min_chars();
     let max_chars = chunk_max_chars();
-    let strategy  = &body.chunk_strategy;
+    // Resolve Auto → deteksi berdasarkan konten
+    let resolved_strategy = if body.chunk_strategy == crate::models::ChunkStrategy::Auto {
+        crate::models::ChunkStrategy::detect(&raw_text)
+    } else {
+        body.chunk_strategy.clone()
+    };
 
-    let chunks_text: Vec<String> = match strategy {
-        crate::models::ChunkStrategy::Semantic => {
+    let chunks_text: Vec<String> = match &resolved_strategy {
+        crate::models::ChunkStrategy::Semantic | crate::models::ChunkStrategy::Auto => {
             match semantic_chunk(&http, embed_url, &gemini_key, &raw_text,
                 chunk_similarity_threshold(), min_chars, max_chars).await {
                 Ok(c)  => c,
@@ -2022,13 +2027,18 @@ pub async fn admin_ingest_text(
     };
     let embed_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
 
-    // Chunking — strategy dari request (default: sentence, 0 Gemini quota saat chunking)
+    // Chunking — strategy dari request (default: auto-detect)
     let min_chars = chunk_min_chars();
     let max_chars = chunk_max_chars();
-    let strategy  = &body.chunk_strategy;
+    // Resolve Auto → deteksi berdasarkan konten
+    let resolved_strategy = if body.chunk_strategy == crate::models::ChunkStrategy::Auto {
+        crate::models::ChunkStrategy::detect(&raw_text)
+    } else {
+        body.chunk_strategy.clone()
+    };
 
-    let chunks_text: Vec<String> = match strategy {
-        crate::models::ChunkStrategy::Semantic => {
+    let chunks_text: Vec<String> = match &resolved_strategy {
+        crate::models::ChunkStrategy::Semantic | crate::models::ChunkStrategy::Auto => {
             match semantic_chunk(&http, embed_url, &gemini_key, &raw_text,
                 chunk_similarity_threshold(), min_chars, max_chars).await {
                 Ok(c)  => c,

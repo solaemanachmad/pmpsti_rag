@@ -141,7 +141,7 @@ export const admin = {
     ),
 
   // Document ingest
-  ingestUrl: (payload: { url: string; title?: string; category?: string; subcategory?: string }) =>
+  ingestUrl: (payload: { url: string; title?: string; category?: string; subcategory?: string; chunk_strategy?: string }) =>
     request<{ document_id: string; chunks: number; title: string }>(
       '/admin/documents/ingest-url',
       { method: 'POST', body: JSON.stringify(payload) }

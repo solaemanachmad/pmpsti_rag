@@ -145,6 +145,7 @@ impl ApiError {
 // ══════════════════════════════════════════════════════════════════
 
 /// Strategi chunking yang bisa dipilih saat ingest.
+/// - `auto`        : Deteksi otomatis berdasarkan konten (default)
 /// - `semantic`    : Embed tiap kalimat, split saat similarity drop (hemat quota dengan bijak)
 /// - `sentence`    : Split di batas kalimat/paragraf, tanpa embedding (0 Gemini calls saat chunking)
 /// - `structural`  : Baris/blok terstruktur (cocok untuk daftar, tabel, data dosen)
@@ -152,6 +153,7 @@ impl ApiError {
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ChunkStrategy {
+    Auto,
     Semantic,
     Sentence,
     Structural,
@@ -159,7 +161,40 @@ pub enum ChunkStrategy {
 }
 
 impl Default for ChunkStrategy {
-    fn default() -> Self { ChunkStrategy::Sentence }
+    fn default() -> Self { ChunkStrategy::Auto }
+}
+
+impl ChunkStrategy {
+    /// Deteksi strategi terbaik berdasarkan konten teks.
+    /// Dipanggil saat strategy == Auto.
+    pub fn detect(text: &str) -> Self {
+        let lines: Vec<&str> = text.lines().collect();
+        let total = lines.len().max(1);
+
+        // Hitung baris yang dimulai dengan nomor (e.g. "1.", "2.", "No. 3")
+        let numbered = lines.iter().filter(|l| {
+            let t = l.trim();
+            t.starts_with(|c: char| c.is_ascii_digit())
+                && t.chars().nth(1).map(|c| c == '.' || c == ')').unwrap_or(false)
+        }).count();
+
+        // Hitung baris yang mengandung separator pipe (tabel)
+        let piped = lines.iter().filter(|l| l.contains('|')).count();
+
+        // Hitung baris pendek (<60 char) yang mengandung ':' — label:value
+        let label_value = lines.iter().filter(|l| {
+            let t = l.trim();
+            t.len() < 80 && t.contains(':')
+        }).count();
+
+        // Structural: banyak baris bernomor, tabel, atau label:value
+        if numbered > total / 5 || piped > total / 4 || label_value > total / 3 {
+            return ChunkStrategy::Structural;
+        }
+
+        // Default: sentence (cocok untuk prosa, artikel, dll)
+        ChunkStrategy::Sentence
+    }
 }
 
 #[derive(Debug, Deserialize)]

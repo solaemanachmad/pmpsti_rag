@@ -11,7 +11,16 @@
   // Ingest form
   let showIngest = false;
   let ingestUrl = ''; let ingestTitle = ''; let ingestCategory = ''; let ingestSubcategory = '';
+  let ingestChunkStrategy = 'auto';
   let ingestLoading = false; let ingestError = ''; let ingestSuccess = '';
+
+  const chunkStrategyOptions = [
+    { value: 'auto',       label: 'Otomatis',   desc: 'Deteksi otomatis berdasarkan konten (disarankan)' },
+    { value: 'sentence',   label: 'Sentence',    desc: 'Cocok untuk artikel, prosa — 0 Gemini quota saat chunking' },
+    { value: 'structural', label: 'Structural',  desc: 'Cocok untuk daftar bernomor, tabel, data dosen' },
+    { value: 'semantic',   label: 'Semantic',    desc: 'Paling akurat, menggunakan Gemini quota lebih banyak' },
+    { value: 'fixed',      label: 'Fixed',       desc: 'Split setiap N karakter — tercepat, fallback darurat' },
+  ];
 
   // Chunk drawer — map document_id → chunk list
   let expandedDoc: string | null = null;
@@ -100,9 +109,11 @@
         title: ingestTitle.trim() || undefined,
         category: ingestCategory.trim() || undefined,
         subcategory: ingestSubcategory.trim() || undefined,
+        chunk_strategy: ingestChunkStrategy,
       });
       ingestSuccess = `Berhasil: "${res.title}" — ${res.chunks} chunk diindeks`;
       ingestUrl = ''; ingestTitle = ''; ingestCategory = ''; ingestSubcategory = '';
+      ingestChunkStrategy = 'auto';
       showIngest = false;
       await loadDocs();
     } catch (e: unknown) { ingestError = e instanceof Error ? e.message : String(e); }
@@ -164,6 +175,26 @@
           <input bind:value={ingestSubcategory} placeholder="misal: Kurikulum"
             class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
         </div>
+      </div>
+      <!-- Chunk strategy selector -->
+      <div>
+        <label class="block text-xs font-medium text-muted-foreground mb-1.5">Strategi Chunking</label>
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {#each chunkStrategyOptions as opt}
+            <button type="button"
+              on:click={() => ingestChunkStrategy = opt.value}
+              title={opt.desc}
+              class="flex flex-col items-center gap-0.5 px-2 py-2 rounded-lg border text-xs transition-colors
+                     {ingestChunkStrategy === opt.value
+                       ? 'border-[#0055A5] bg-[#0055A5]/10 text-[#0055A5] font-semibold'
+                       : 'border-border text-muted-foreground hover:border-[#0055A5]/50 hover:text-foreground'}">
+              <span class="font-medium">{opt.label}</span>
+            </button>
+          {/each}
+        </div>
+        <p class="text-xs text-muted-foreground mt-1.5">
+          {chunkStrategyOptions.find(o => o.value === ingestChunkStrategy)?.desc ?? ''}
+        </p>
       </div>
       {#if ingestError}
         <div class="flex items-center gap-2 text-rose-600 text-sm"><AlertCircle size={14} />{ingestError}</div>
