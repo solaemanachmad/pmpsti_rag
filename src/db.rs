@@ -1836,7 +1836,7 @@ impl Database {
     /// List semua pinned FAQ (untuk admin)
     pub async fn faq_list_pins(&self) -> Result<Vec<FaqPin>, String> {
         sqlx::query_as::<_, FaqPin>(
-            "SELECT id, question, sort_order, created_at FROM faq_pins ORDER BY sort_order ASC, created_at ASC"
+            "SELECT id, question, sort_order, created_at::TEXT AS created_at FROM faq_pins ORDER BY sort_order ASC, created_at ASC"
         )
         .fetch_all(&self.pool)
         .await
@@ -1872,11 +1872,11 @@ impl Database {
     /// Top queries dari query_logs (untuk admin pilih yang mau di-pin)
     pub async fn faq_top_queries(&self, limit: i64) -> Result<Vec<TopQuery>, String> {
         sqlx::query_as::<_, TopQuery>(
-            r#"SELECT query_text, COUNT(*)::BIGINT AS count, MAX(created_at) AS last_asked
+            r#"SELECT query_text, COUNT(*)::BIGINT AS count, MAX(created_at)::TEXT AS last_asked
                FROM query_logs
                WHERE LENGTH(query_text) BETWEEN 15 AND 200
                GROUP BY query_text
-               ORDER BY count DESC, last_asked DESC
+               ORDER BY count DESC, MAX(created_at) DESC
                LIMIT $1"#
         )
         .bind(limit)
