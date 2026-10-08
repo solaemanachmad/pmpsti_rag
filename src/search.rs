@@ -1,7 +1,8 @@
-use log::info;
+use log::{info, warn};
 use std::{env, sync::Arc};
 use serde::{Deserialize, Serialize};
 use reqwest::Client;
+use tokio::time::{sleep, Duration};
 
 use crate::db::{Database, SearchResult};
 
@@ -58,30 +59,56 @@ impl SearchEngine {
             },
             output_dimensionality: 768,
         };
-        let resp = self.http_client
-            .post(url)
-            .header("x-goog-api-key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<EmbedResponse>()
-            .await?;
-        Ok(resp.embedding.values)
+
+        // Retry dengan exponential backoff untuk 429 (rate limit)
+        let delays = [1u64, 2, 4]; // detik
+        let mut last_err = None;
+        for (attempt, &delay_secs) in delays.iter().enumerate() {
+            let res = self.http_client
+                .post(url)
+                .header("x-goog-api-key", &self.api_key)
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await;
+
+            match res {
+                Ok(resp) if resp.status() == 429 => {
+                    warn!("Gemini embedding 429 (attempt {}), tunggu {}s…", attempt + 1, delay_secs);
+                    last_err = Some(anyhow::anyhow!("Gemini embedding rate limit (429)"));
+                    sleep(Duration::from_secs(delay_secs)).await;
+                }
+                Ok(resp) => {
+                    let resp = resp.error_for_status()?;
+                    let data = resp.json::<EmbedResponse>().await?;
+                    return Ok(data.embedding.values);
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Embedding gagal setelah 3 percobaan")))
     }
 
-    // ── Hybrid (default) ──
+    // ── Hybrid (default) — fallback ke fulltext jika embedding gagal ──
     pub async fn search(
         &self,
         query:           &str,
         limit:           i64,
         category_filter: Option<&str>,
     ) -> Result<Vec<SearchResult>, anyhow::Error> {
-        let embedding = self.embed_query(query).await?;
-        let mut results = self.db.search_hybrid(query, embedding, limit, category_filter).await?;
-        self.enrich_snippets(&mut results, query);
-        Ok(results)
+        match self.embed_query(query).await {
+            Ok(embedding) => {
+                let mut results = self.db.search_hybrid(query, embedding, limit, category_filter).await?;
+                self.enrich_snippets(&mut results, query);
+                Ok(results)
+            }
+            Err(e) => {
+                warn!("Embedding gagal ({}), fallback ke fulltext search", e);
+                let mut results = self.db.search_fulltext(query, limit, category_filter).await?;
+                self.enrich_snippets(&mut results, query);
+                Ok(results)
+            }
+        }
     }
 
     // ── Pure vector ──
