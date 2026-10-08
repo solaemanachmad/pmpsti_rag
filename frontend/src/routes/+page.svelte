@@ -64,6 +64,8 @@
   let faqOpen: number | null = null;       // index accordion yang sedang terbuka
   let faqAnswers: Record<number, string> = {}; // cache jawaban accordion
   let faqLoading: Record<number, boolean> = {};
+  const FAQ_INITIAL = 3;                   // tampilkan 3 dulu
+  let faqExpanded = false;                 // tombol "Lihat semua"
 
   const fallbackSuggestions = [
     'Apa syarat kelulusan program magister PMPSTI?',
@@ -306,14 +308,14 @@
 
         <!-- FAQ section -->
         {#if faqQuestions.length > 0}
+          {@const visibleFaq = faqExpanded ? faqQuestions : faqQuestions.slice(0, FAQ_INITIAL)}
           <div class="mt-6 w-full max-w-lg">
             <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 text-center">
               Pertanyaan Populer
             </p>
             <div class="flex flex-col gap-1.5">
-              {#each faqQuestions as q, idx}
+              {#each visibleFaq as q, idx}
                 <div class="border rounded-xl bg-card overflow-hidden transition-all">
-                  <!-- Header: selalu tampil, klik beda aksi tergantung login -->
                   <button
                     on:click={() => toggleFaq(idx)}
                     class="w-full text-left flex items-center justify-between gap-3
@@ -322,7 +324,6 @@
                       {q}
                     </span>
                     <span class="shrink-0 flex items-center gap-2">
-                      <!-- Chip "Tanya" untuk langsung submit ke chat -->
                       <span
                         role="button"
                         tabindex="0"
@@ -339,7 +340,6 @@
                     </span>
                   </button>
 
-                  <!-- Accordion body: jawaban singkat -->
                   {#if faqOpen === idx}
                     <div class="px-4 pb-3 border-t border-border/50">
                       {#if faqLoading[idx]}
@@ -365,6 +365,20 @@
                 </div>
               {/each}
             </div>
+
+            <!-- Tombol expand jika ada lebih dari FAQ_INITIAL -->
+            {#if faqQuestions.length > FAQ_INITIAL}
+              <button
+                on:click={() => { faqExpanded = !faqExpanded; if (!faqExpanded) faqOpen = null; }}
+                class="mt-2 w-full flex items-center justify-center gap-1.5 text-xs
+                       text-muted-foreground hover:text-foreground transition-colors py-1.5">
+                <ChevronDown size={13}
+                  class="transition-transform duration-200 {faqExpanded ? 'rotate-180' : ''}" />
+                {faqExpanded
+                  ? 'Sembunyikan'
+                  : `Lihat ${faqQuestions.length - FAQ_INITIAL} pertanyaan lainnya`}
+              </button>
+            {/if}
           </div>
         {/if}
 

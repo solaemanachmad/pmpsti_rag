@@ -2,13 +2,14 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { currentUser, authReady } from '$lib/stores/auth';
-  import { BarChart3, Users, FileText, List } from 'lucide-svelte';
+  import { BarChart3, Users, FileText, List, HelpCircle } from 'lucide-svelte';
 
   const navItems = [
     { href: '/admin',           label: 'Dashboard', icon: BarChart3 },
     { href: '/admin/users',     label: 'Pengguna',  icon: Users },
     { href: '/admin/documents', label: 'Dokumen',   icon: FileText },
     { href: '/admin/logs',      label: 'Log Query', icon: List },
+    { href: '/admin/faq',       label: 'FAQ',       icon: HelpCircle },
   ];
 
   // Reactive guard — runs whenever authReady or currentUser changes
@@ -31,7 +32,7 @@
         {#each navItems as item}
           <a href={item.href}
              class="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md transition-colors
-                    {active === item.href
+                    {active === item.href || (item.href !== '/admin' && active.startsWith(item.href))
                       ? 'text-[#0055A5] bg-[#0055A5]/8'
                       : 'text-muted-foreground hover:text-foreground hover:bg-muted'}">
             <svelte:component this={item.icon} size={14} />
