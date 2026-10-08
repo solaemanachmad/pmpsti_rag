@@ -170,6 +170,7 @@ async fn main() -> std::io::Result<()> {
                 web::scope("/api")
                     .route("/ask",        web::post().to(handlers::ask))
                     .route("/ask_public", web::post().to(handlers::ask_public))
+                    .route("/faq",        web::get().to(handlers::faq_public))
                     .route("/categories", web::get().to(handlers::list_categories_handler))
                     .route("/sessions",             web::get().to(handlers::list_sessions))
                     .route("/sessions/{id}",        web::get().to(handlers::get_session_handler))
@@ -196,6 +197,10 @@ async fn main() -> std::io::Result<()> {
                     .route("/admin/chunks/{id}",              web::delete().to(handlers::admin_delete_chunk))
                     .route("/admin/chunks/{id}",              web::put().to(handlers::admin_update_chunk))
                     .route("/admin/logs",                web::get().to(handlers::admin_query_logs))
+                    .route("/admin/faq/pins",            web::get().to(handlers::admin_faq_pins))
+                    .route("/admin/faq/pins",            web::post().to(handlers::admin_faq_pin))
+                    .route("/admin/faq/pins/{id}",       web::delete().to(handlers::admin_faq_unpin))
+                    .route("/admin/faq/top",             web::get().to(handlers::admin_faq_top))
             )
     })
     .bind(&addr)?

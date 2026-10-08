@@ -355,6 +355,42 @@ export interface AdminQueryLog {
   created_at: string;
 }
 
+// ── FAQ ──
+export const faq = {
+  /** Public: ambil daftar pertanyaan FAQ (pinned + top queries) */
+  list: () => request<string[]>('/faq'),
+
+  /** Admin: list pinned questions */
+  pins: () => request<FaqPin[]>('/admin/faq/pins'),
+
+  /** Admin: top queries dari logs untuk dipilih di-pin */
+  topQueries: () => request<TopQuery[]>('/admin/faq/top'),
+
+  /** Admin: pin sebuah pertanyaan */
+  pin: (question: string) =>
+    request<{ id: number }>('/admin/faq/pins', {
+      method: 'POST',
+      body: JSON.stringify({ question }),
+    }),
+
+  /** Admin: unpin */
+  unpin: (id: number) =>
+    request<{ message: string }>(`/admin/faq/pins/${id}`, { method: 'DELETE' }),
+};
+
+export interface FaqPin {
+  id: number;
+  question: string;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface TopQuery {
+  query_text: string;
+  count: number;
+  last_asked: string;
+}
+
 // ── Public ask (guest, no auth) ──
 export interface GuestAskResponse {
   answer: string;

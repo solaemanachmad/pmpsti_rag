@@ -3,9 +3,9 @@
   import { goto } from '$app/navigation';
   import ThemeToggle from '$lib/components/ThemeToggle.svelte';
   import { isLoggedIn } from '$lib/stores/auth';
-  import { askPublic } from '$lib/api/client';
+  import { askPublic, faq } from '$lib/api/client';
   import type { GuestAskResponse, SourceRef } from '$lib/api/client';
-  import { Send, Loader2, FileText, LogIn, UserPlus, ExternalLink, Sparkles } from 'lucide-svelte';
+  import { Send, Loader2, FileText, LogIn, UserPlus, ExternalLink, Sparkles, ChevronDown } from 'lucide-svelte';
   import { marked } from 'marked';
   import DOMPurify from 'dompurify';
 
@@ -59,18 +59,32 @@
   let questionsLeft = GUEST_QUOTA;
   let messagesEl: HTMLDivElement;
 
-  const suggestions = [
+  // FAQ — diisi dari API, fallback ke hardcoded jika gagal
+  let faqQuestions: string[] = [];
+  let faqOpen: number | null = null;       // index accordion yang sedang terbuka
+  let faqAnswers: Record<number, string> = {}; // cache jawaban accordion
+  let faqLoading: Record<number, boolean> = {};
+
+  const fallbackSuggestions = [
     'Apa syarat kelulusan program magister PMPSTI?',
     'Bagaimana mekanisme pembayaran UKT?',
     'Prosedur pengajuan cuti akademik mahasiswa',
   ];
 
-  onMount(() => {
+  onMount(async () => {
     if ($isLoggedIn) { goto('/chat'); return; }
     dark = document.documentElement.classList.contains('dark');
     questionsUsed = getQuestionsUsed();
     questionsLeft = Math.max(GUEST_QUOTA - questionsUsed, 0);
     if (questionsLeft === 0) quotaExceeded = true;
+
+    // Load FAQ dari backend
+    try {
+      const qs = await faq.list();
+      faqQuestions = qs.length > 0 ? qs : fallbackSuggestions;
+    } catch {
+      faqQuestions = fallbackSuggestions;
+    }
 
     // Sync dark state saat ThemeToggle mengubah kelas
     const observer = new MutationObserver(() => {
@@ -79,6 +93,24 @@
     observer.observe(document.documentElement, { attributeFilter: ['class'] });
     return () => observer.disconnect();
   });
+
+  // Accordion: load jawaban via guest RAG
+  async function toggleFaq(idx: number) {
+    if (faqOpen === idx) { faqOpen = null; return; }
+    faqOpen = idx;
+    if (faqAnswers[idx] !== undefined) return; // sudah ada cache
+
+    const q = faqQuestions[idx];
+    faqLoading = { ...faqLoading, [idx]: true };
+    let ans = '';
+    const token = getGuestToken();
+    await askPublic(
+      q, token,
+      (chunk) => { ans += chunk; faqAnswers = { ...faqAnswers, [idx]: ans }; },
+      () => { faqLoading = { ...faqLoading, [idx]: false }; },
+      () => { faqLoading = { ...faqLoading, [idx]: false }; faqAnswers = { ...faqAnswers, [idx]: 'Gagal memuat jawaban.' }; }
+    );
+  }
 
   async function scrollBottom() {
     await new Promise(r => setTimeout(r, 30));
@@ -272,18 +304,69 @@
           Tanya di sini — dijawab langsung dari dokumen resmi.
         </p>
 
-        <!-- Suggestion chips -->
-        <div class="mt-6 flex flex-col gap-2 w-full max-w-sm">
-          {#each suggestions as s}
-            <button
-              on:click={() => send(s)}
-              class="text-left text-sm px-4 py-2.5 rounded-xl border bg-card
-                     hover:border-[#0055A5]/40 hover:bg-[#EEF4FF]/60 transition-colors
-                     text-muted-foreground hover:text-foreground dark:hover:bg-[#0055A5]/10">
-              {s}
-            </button>
-          {/each}
-        </div>
+        <!-- FAQ section -->
+        {#if faqQuestions.length > 0}
+          <div class="mt-6 w-full max-w-lg">
+            <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 text-center">
+              Pertanyaan Populer
+            </p>
+            <div class="flex flex-col gap-1.5">
+              {#each faqQuestions as q, idx}
+                <div class="border rounded-xl bg-card overflow-hidden transition-all">
+                  <!-- Header: selalu tampil, klik beda aksi tergantung login -->
+                  <button
+                    on:click={() => toggleFaq(idx)}
+                    class="w-full text-left flex items-center justify-between gap-3
+                           px-4 py-3 hover:bg-muted/40 transition-colors group">
+                    <span class="text-sm text-foreground/90 group-hover:text-foreground leading-snug">
+                      {q}
+                    </span>
+                    <span class="shrink-0 flex items-center gap-2">
+                      <!-- Chip "Tanya" untuk langsung submit ke chat -->
+                      <span
+                        role="button"
+                        tabindex="0"
+                        on:click|stopPropagation={() => send(q)}
+                        on:keydown|stopPropagation={(e) => e.key === 'Enter' && send(q)}
+                        class="hidden sm:inline-flex items-center text-[10px] font-semibold px-2 py-0.5
+                               bg-[#0055A5]/10 text-[#0055A5] rounded-full
+                               hover:bg-[#0055A5] hover:text-white transition-colors cursor-pointer">
+                        Tanya
+                      </span>
+                      <ChevronDown size={14}
+                        class="text-muted-foreground transition-transform duration-200
+                               {faqOpen === idx ? 'rotate-180' : ''}" />
+                    </span>
+                  </button>
+
+                  <!-- Accordion body: jawaban singkat -->
+                  {#if faqOpen === idx}
+                    <div class="px-4 pb-3 border-t border-border/50">
+                      {#if faqLoading[idx]}
+                        <div class="flex items-center gap-2 text-xs text-muted-foreground pt-3">
+                          <Loader2 size={12} class="animate-spin" /> Mencari jawaban…
+                        </div>
+                      {:else if faqAnswers[idx]}
+                        <div class="prose prose-sm text-sm leading-relaxed pt-3 max-h-48 overflow-y-auto">
+                          {@html renderMarkdown(faqAnswers[idx])}
+                        </div>
+                        <button
+                          on:click={() => send(q)}
+                          class="mt-3 text-xs text-[#0055A5] hover:underline font-medium">
+                          Tanya lebih lanjut →
+                        </button>
+                      {:else}
+                        <div class="flex items-center gap-2 text-xs text-muted-foreground pt-3">
+                          <Loader2 size={12} class="animate-spin" /> Memuat…
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
 
         {#if questionsLeft > 0}
           <p class="mt-5 text-xs text-muted-foreground">

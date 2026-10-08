@@ -321,6 +321,17 @@ impl Database {
             }
         }
 
+        // Tabel faq_pins: admin bisa pin query tertentu agar selalu muncul di FAQ
+        sqlx::query("
+            CREATE TABLE IF NOT EXISTS faq_pins (
+                id         BIGSERIAL PRIMARY KEY,
+                question   TEXT NOT NULL UNIQUE,
+                pinned_by  BIGINT REFERENCES users(id) ON DELETE SET NULL,
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        ").execute(&self.pool).await?;
+
         log::info!("Database schema ready.");
         Ok(())
     }
@@ -1773,11 +1784,127 @@ impl Database {
         }
     }
 
+    // ── FAQ ────────────────────────────────────────────────────────────────────
+
+    /// Ambil FAQ untuk ditampilkan di halaman publik:
+    /// 1. Semua pinned questions (admin-pilih), diurutkan sort_order
+    /// 2. Top queries dari query_logs yang belum ada di pinned, length 20-150 char,
+    ///    sampai total `limit` pertanyaan.
+    pub async fn faq_public(&self, limit: i64) -> Result<Vec<String>, String> {
+        // Pinned questions
+        let pinned: Vec<String> = sqlx::query(
+            "SELECT question FROM faq_pins ORDER BY sort_order ASC, created_at ASC LIMIT $1"
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|r| r.get::<String, _>("question"))
+        .collect();
+
+        let remaining = limit - pinned.len() as i64;
+        let mut result = pinned.clone();
+
+        if remaining > 0 {
+            // Top queries dari query_logs, exclude yang sudah di pinned
+            let pinned_arr: Vec<&str> = pinned.iter().map(|s| s.as_str()).collect();
+            let top: Vec<String> = sqlx::query(
+                r#"SELECT query_text
+                   FROM query_logs
+                   WHERE LENGTH(query_text) BETWEEN 15 AND 200
+                     AND query_text NOT IN (SELECT question FROM faq_pins)
+                   GROUP BY query_text
+                   ORDER BY COUNT(*) DESC, MAX(created_at) DESC
+                   LIMIT $1"#
+            )
+            .bind(remaining)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|r| r.get::<String, _>("query_text"))
+            .filter(|q| !pinned_arr.contains(&q.as_str()))
+            .collect();
+
+            result.extend(top);
+        }
+
+        Ok(result)
+    }
+
+    /// List semua pinned FAQ (untuk admin)
+    pub async fn faq_list_pins(&self) -> Result<Vec<FaqPin>, String> {
+        sqlx::query_as::<_, FaqPin>(
+            "SELECT id, question, sort_order, created_at FROM faq_pins ORDER BY sort_order ASC, created_at ASC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// Pin sebuah pertanyaan ke FAQ
+    pub async fn faq_pin(&self, question: &str, admin_id: i64) -> Result<i64, String> {
+        let row = sqlx::query(
+            "INSERT INTO faq_pins (question, pinned_by, sort_order)
+             VALUES ($1, $2, (SELECT COALESCE(MAX(sort_order),0)+1 FROM faq_pins))
+             ON CONFLICT (question) DO UPDATE SET sort_order = faq_pins.sort_order
+             RETURNING id"
+        )
+        .bind(question)
+        .bind(admin_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.get::<i64, _>("id"))
+    }
+
+    /// Unpin pertanyaan dari FAQ
+    pub async fn faq_unpin(&self, pin_id: i64) -> Result<(), String> {
+        sqlx::query("DELETE FROM faq_pins WHERE id = $1")
+            .bind(pin_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Top queries dari query_logs (untuk admin pilih yang mau di-pin)
+    pub async fn faq_top_queries(&self, limit: i64) -> Result<Vec<TopQuery>, String> {
+        sqlx::query_as::<_, TopQuery>(
+            r#"SELECT query_text, COUNT(*)::BIGINT AS count, MAX(created_at) AS last_asked
+               FROM query_logs
+               WHERE LENGTH(query_text) BETWEEN 15 AND 200
+               GROUP BY query_text
+               ORDER BY count DESC, last_asked DESC
+               LIMIT $1"#
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
 }
 
 // ══════════════════════════════════════════════════════════════════
 //  ADMIN QUERY LOGS
 // ══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct FaqPin {
+    pub id:         i64,
+    pub question:   String,
+    pub sort_order: i32,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct TopQuery {
+    pub query_text:  String,
+    pub count:       i64,
+    pub last_asked:  String,
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AdminQueryLog {

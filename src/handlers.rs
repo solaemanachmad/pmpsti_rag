@@ -1632,6 +1632,75 @@ pub async fn admin_update_chunk(
 }
 
 // ── Admin: query logs ──────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+//  FAQ — public + admin
+// ══════════════════════════════════════════════════════════════════
+
+/// GET /api/faq — publik, kembalikan daftar pertanyaan FAQ
+pub async fn faq_public(state: web::Data<AppState>) -> HttpResponse {
+    let limit = 8i64;
+    match state.db.faq_public(limit).await {
+        Ok(qs) => HttpResponse::Ok().json(ApiSuccess::new(qs)),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+/// GET /api/admin/faq/pins — list pinned questions
+pub async fn admin_faq_pins(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" { return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin")); }
+    match state.db.faq_list_pins().await {
+        Ok(pins) => HttpResponse::Ok().json(ApiSuccess::new(pins)),
+        Err(e)   => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+/// GET /api/admin/faq/top — top queries dari logs (untuk admin pilih yang di-pin)
+pub async fn admin_faq_top(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" { return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin")); }
+    let limit = 30i64;
+    match state.db.faq_top_queries(limit).await {
+        Ok(qs) => HttpResponse::Ok().json(ApiSuccess::new(qs)),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct FaqPinBody { pub question: String }
+
+/// POST /api/admin/faq/pins — pin sebuah pertanyaan
+pub async fn admin_faq_pin(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    body:  web::Json<FaqPinBody>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" { return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin")); }
+    let admin_id: i64 = claims.sub.parse().unwrap_or(0);
+    if body.question.trim().is_empty() {
+        return HttpResponse::BadRequest().json(ApiError::new(400, "Question kosong"));
+    }
+    match state.db.faq_pin(body.question.trim(), admin_id).await {
+        Ok(id) => HttpResponse::Ok().json(ApiSuccess::new(serde_json::json!({ "id": id }))),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
+/// DELETE /api/admin/faq/pins/{id} — unpin
+pub async fn admin_faq_unpin(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<i64>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" { return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin")); }
+    match state.db.faq_unpin(path.into_inner()).await {
+        Ok(_)  => HttpResponse::Ok().json(ApiSuccess::new("Unpinned")),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
 pub async fn admin_query_logs(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
     let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
     if claims.role != "admin" {
