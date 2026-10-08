@@ -36,10 +36,24 @@
     } catch { return 'guest_' + Math.random().toString(36).slice(2); }
   }
   function getQuestionsUsed(): number {
-    try { return parseInt(localStorage.getItem('guest_questions_used') ?? '0', 10); } catch { return 0; }
+    try {
+      // Reset harian: kalau hari ini berbeda dari hari terakhir dipakai, reset ke 0
+      const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+      const lastDay = localStorage.getItem('guest_questions_day');
+      if (lastDay !== today) {
+        localStorage.setItem('guest_questions_used', '0');
+        localStorage.setItem('guest_questions_day', today);
+        return 0;
+      }
+      return parseInt(localStorage.getItem('guest_questions_used') ?? '0', 10);
+    } catch { return 0; }
   }
   function setQuestionsUsed(n: number) {
-    try { localStorage.setItem('guest_questions_used', String(n)); } catch {}
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      localStorage.setItem('guest_questions_used', String(n));
+      localStorage.setItem('guest_questions_day', today);
+    } catch {}
   }
 
   interface Message {
@@ -382,13 +396,6 @@
           </div>
         {/if}
 
-        {#if questionsLeft > 0}
-          <p class="mt-5 text-xs text-muted-foreground">
-            {questionsLeft} pertanyaan gratis ·
-            <a href="/register" class="text-[#0055A5] font-semibold hover:underline">Daftar</a>
-            untuk akses penuh
-          </p>
-        {/if}
       </div>
 
     {:else}
@@ -506,7 +513,7 @@
     {:else}
       <!-- ── Input area ── -->
       <div class="mt-4">
-        {#if questionsUsed > 0 || messages.length > 0}
+        {#if messages.length > 0 && questionsLeft > 0}
           <p class="text-xs text-muted-foreground text-center mb-2">
             {questionsLeft} pertanyaan gratis tersisa ·
             <a href="/register" class="text-[#0055A5] hover:underline font-medium">Daftar</a>
