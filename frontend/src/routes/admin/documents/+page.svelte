@@ -154,30 +154,30 @@
     </div>
     <div class="grid gap-3">
       <div>
-        <label class="block text-xs font-medium text-muted-foreground mb-1">URL <span class="text-rose-500">*</span></label>
-        <input bind:value={ingestUrl} placeholder="https://example.com/halaman"
+        <label for="ingest-url" class="block text-xs font-medium text-muted-foreground mb-1">URL <span class="text-rose-500">*</span></label>
+        <input id="ingest-url" bind:value={ingestUrl} placeholder="https://example.com/halaman"
           class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
       </div>
       <div class="grid sm:grid-cols-3 gap-3">
         <div>
-          <label class="block text-xs font-medium text-muted-foreground mb-1">Judul</label>
-          <input bind:value={ingestTitle} placeholder="Judul dokumen (opsional)"
+          <label for="ingest-title" class="block text-xs font-medium text-muted-foreground mb-1">Judul</label>
+          <input id="ingest-title" bind:value={ingestTitle} placeholder="Judul dokumen (opsional)"
             class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
         </div>
         <div>
-          <label class="block text-xs font-medium text-muted-foreground mb-1">Kategori</label>
-          <input bind:value={ingestCategory} placeholder="misal: Akademik"
+          <label for="ingest-category" class="block text-xs font-medium text-muted-foreground mb-1">Kategori</label>
+          <input id="ingest-category" bind:value={ingestCategory} placeholder="misal: Akademik"
             class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
         </div>
         <div>
-          <label class="block text-xs font-medium text-muted-foreground mb-1">Sub-kategori</label>
-          <input bind:value={ingestSubcategory} placeholder="misal: Kurikulum"
+          <label for="ingest-subcategory" class="block text-xs font-medium text-muted-foreground mb-1">Sub-kategori</label>
+          <input id="ingest-subcategory" bind:value={ingestSubcategory} placeholder="misal: Kurikulum"
             class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
         </div>
       </div>
       <!-- Chunk strategy selector -->
       <div>
-        <label class="block text-xs font-medium text-muted-foreground mb-1.5">Strategi Chunking</label>
+        <span class="block text-xs font-medium text-muted-foreground mb-1.5">Strategi Chunking</span>
         <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
           {#each chunkStrategyOptions as opt}
             <button type="button"
@@ -277,20 +277,20 @@
                 </div>
                 <div class="grid sm:grid-cols-3 gap-3 mb-3">
                   <div class="sm:col-span-3">
-                    <label class="block text-xs font-medium text-muted-foreground mb-1">Judul</label>
-                    <input bind:value={editTitle} placeholder="Judul dokumen"
+                    <label for="edit-title" class="block text-xs font-medium text-muted-foreground mb-1">Judul</label>
+                    <input id="edit-title" bind:value={editTitle} placeholder="Judul dokumen"
                       on:click|stopPropagation
                       class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
                   </div>
                   <div>
-                    <label class="block text-xs font-medium text-muted-foreground mb-1">Kategori</label>
-                    <input bind:value={editCategory} placeholder="misal: Akademik"
+                    <label for="edit-category" class="block text-xs font-medium text-muted-foreground mb-1">Kategori</label>
+                    <input id="edit-category" bind:value={editCategory} placeholder="misal: Akademik"
                       on:click|stopPropagation
                       class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
                   </div>
                   <div>
-                    <label class="block text-xs font-medium text-muted-foreground mb-1">Sub-kategori</label>
-                    <input bind:value={editSubcategory} placeholder="misal: Kurikulum"
+                    <label for="edit-subcategory" class="block text-xs font-medium text-muted-foreground mb-1">Sub-kategori</label>
+                    <input id="edit-subcategory" bind:value={editSubcategory} placeholder="misal: Kurikulum"
                       on:click|stopPropagation
                       class="w-full text-sm border rounded-lg px-3 py-2 bg-background focus:ring-1 focus:ring-[#0055A5] outline-none" />
                   </div>
