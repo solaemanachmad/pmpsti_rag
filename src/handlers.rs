@@ -271,6 +271,129 @@ fn split_sentences(text: &str) -> Vec<String> {
     sentences
 }
 
+// ══════════════════════════════════════════════════════════════════
+//  NON-SEMANTIC CHUNKING STRATEGIES (tidak butuh Gemini quota)
+// ══════════════════════════════════════════════════════════════════
+
+/// **sentence** — Split di batas kalimat dan paragraf, gabung sampai min_chars.
+/// Tidak butuh embedding. Cocok untuk teks naratif panjang.
+fn sentence_chunk(text: &str, min_chars: usize, max_chars: usize) -> Vec<String> {
+    let sentences = split_sentences(text);
+    merge_into_chunks(sentences, min_chars, max_chars)
+}
+
+/// **structural** — Tiap baris adalah unit. Baris yang diawali angka/bullet/header
+/// dijadikan batas chunk baru. Sangat cocok untuk daftar dosen, tabel, SOP.
+fn structural_chunk(text: &str, min_chars: usize, max_chars: usize) -> Vec<String> {
+    let mut blocks: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            // Baris kosong = potensi batas blok
+            if !current.trim().is_empty() && current.len() >= min_chars / 2 {
+                // Jika cukup besar, simpan sebagai blok tersendiri
+                // tapi biarkan terus bergabung dulu — cek di akhir
+            }
+            if !current.is_empty() { current.push('\n'); }
+            continue;
+        }
+
+        // Deteksi header/entry baru: baris yang diawali digit+titik/paren,
+        // atau "##", atau "---", atau huruf besar semua (≥4 huruf)
+        let is_new_entry = {
+            let is_numbered = trimmed.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+                && (trimmed.contains(". ") || trimmed.contains(") "));
+            let is_header = trimmed.starts_with("##") || trimmed.starts_with("---")
+                || trimmed.starts_with("===");
+            let is_allcaps = trimmed.len() >= 4
+                && trimmed.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())
+                && trimmed.chars().filter(|c| c.is_alphabetic()).count() >= 4;
+            is_numbered || is_header || is_allcaps
+        };
+
+        if is_new_entry && current.trim().len() >= min_chars {
+            blocks.push(current.trim().to_string());
+            current = String::new();
+        }
+
+        if !current.is_empty() { current.push('\n'); }
+        current.push_str(trimmed);
+    }
+    if !current.trim().is_empty() {
+        blocks.push(current.trim().to_string());
+    }
+
+    // Merge blok kecil, split blok besar
+    merge_into_chunks(blocks, min_chars, max_chars)
+}
+
+/// **fixed** — Split setiap max_chars karakter, di batas kata jika memungkinkan.
+fn fixed_chunk(text: &str, max_chars: usize) -> Vec<String> {
+    if text.len() <= max_chars {
+        return vec![text.to_string()];
+    }
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let chars: Vec<char> = text.chars().collect();
+    while start < chars.len() {
+        let end = (start + max_chars).min(chars.len());
+        // Mundur ke batas kata
+        let split_at = if end < chars.len() {
+            let mut s = end;
+            while s > start && !chars[s].is_whitespace() { s -= 1; }
+            if s == start { end } else { s }
+        } else { end };
+        chunks.push(chars[start..split_at].iter().collect::<String>().trim().to_string());
+        start = split_at;
+        // skip whitespace
+        while start < chars.len() && chars[start].is_whitespace() { start += 1; }
+    }
+    chunks.into_iter().filter(|c| !c.is_empty()).collect()
+}
+
+/// Helper: merge Vec<String> unit menjadi chunks dengan min/max size.
+fn merge_into_chunks(units: Vec<String>, min_chars: usize, max_chars: usize) -> Vec<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    let mut pending = String::new();
+
+    for unit in units {
+        if pending.is_empty() {
+            pending = unit;
+        } else {
+            let sep = if pending.ends_with('\n') { "" } else { "\n" };
+            let candidate = format!("{}{}{}", pending, sep, unit);
+            if candidate.len() > max_chars && pending.len() >= min_chars {
+                // pending sudah cukup besar, simpan dan mulai baru
+                chunks.push(pending.clone());
+                pending = unit;
+            } else {
+                pending = candidate;
+            }
+        }
+        // Jika pending sudah terlalu besar, force split
+        if pending.len() > max_chars {
+            chunks.extend(fixed_chunk(&pending, max_chars));
+            pending = String::new();
+        }
+    }
+    if !pending.trim().is_empty() {
+        if let Some(last) = chunks.last_mut() {
+            if last.len() + pending.len() + 1 <= max_chars {
+                last.push('\n');
+                last.push_str(&pending);
+            } else {
+                chunks.push(pending);
+            }
+        } else {
+            chunks.push(pending);
+        }
+    }
+    if chunks.is_empty() { chunks.push(String::new()); }
+    chunks.into_iter().filter(|c| c.trim().len() >= 10).collect()
+}
+
 /// Cosine similarity antara dua vektor f32.
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
@@ -1805,23 +1928,31 @@ pub async fn admin_ingest_url(
             .json(ApiError::new(422, "Konten terlalu pendek atau tidak bisa di-parse"));
     }
 
-    // 3. Semantic chunking via Gemini embeddings
+    // 3. Gemini key (selalu diperlukan untuk embed chunk, meskipun chunking tidak semantic)
     let gemini_key = match std::env::var("GEMINI_API_KEY") {
-        Ok(k) => k,
-        Err(_) => return HttpResponse::InternalServerError()
+        Ok(k) if !k.is_empty() => k,
+        _ => return HttpResponse::InternalServerError()
             .json(ApiError::new(500, "GEMINI_API_KEY tidak dikonfigurasi")),
     };
     let embed_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
 
-    let chunks_text = match semantic_chunk(
-        &http, embed_url, &gemini_key, &raw_text,
-        chunk_similarity_threshold(),
-        chunk_min_chars(),
-        chunk_max_chars(),
-    ).await {
-        Ok(c)  => c,
-        Err(e) => return HttpResponse::BadGateway()
-            .json(ApiError::new(502, format!("Semantic chunk error: {e}"))),
+    // Chunking — strategy dipilih dari request body (default: sentence, 0 Gemini quota saat chunking)
+    let min_chars = chunk_min_chars();
+    let max_chars = chunk_max_chars();
+    let strategy  = &body.chunk_strategy;
+
+    let chunks_text: Vec<String> = match strategy {
+        crate::models::ChunkStrategy::Semantic => {
+            match semantic_chunk(&http, embed_url, &gemini_key, &raw_text,
+                chunk_similarity_threshold(), min_chars, max_chars).await {
+                Ok(c)  => c,
+                Err(e) => return HttpResponse::BadGateway()
+                    .json(ApiError::new(502, format!("Semantic chunk error: {e}"))),
+            }
+        }
+        crate::models::ChunkStrategy::Sentence   => sentence_chunk(&raw_text, min_chars, max_chars),
+        crate::models::ChunkStrategy::Structural => structural_chunk(&raw_text, min_chars, max_chars),
+        crate::models::ChunkStrategy::Fixed      => fixed_chunk(&raw_text, max_chars),
     };
 
     let category    = body.category.clone().unwrap_or_else(|| "Umum".to_string());
@@ -1883,24 +2014,33 @@ pub async fn admin_ingest_text(
         .timeout(std::time::Duration::from_secs(30))
         .build().unwrap();
 
+    // Gemini key — selalu diperlukan untuk embed chunk
     let gemini_key = match std::env::var("GEMINI_API_KEY") {
-        Ok(k) => k,
-        Err(_) => return HttpResponse::InternalServerError()
+        Ok(k) if !k.is_empty() => k,
+        _ => return HttpResponse::InternalServerError()
             .json(ApiError::new(500, "GEMINI_API_KEY tidak dikonfigurasi")),
     };
     let embed_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
 
-    // Semantic chunking via Gemini embeddings
-    let chunks_text = match semantic_chunk(
-        &http, embed_url, &gemini_key, &raw_text,
-        chunk_similarity_threshold(),
-        chunk_min_chars(),
-        chunk_max_chars(),
-    ).await {
-        Ok(c)  => c,
-        Err(e) => return HttpResponse::BadGateway()
-            .json(ApiError::new(502, format!("Semantic chunk error: {e}"))),
+    // Chunking — strategy dari request (default: sentence, 0 Gemini quota saat chunking)
+    let min_chars = chunk_min_chars();
+    let max_chars = chunk_max_chars();
+    let strategy  = &body.chunk_strategy;
+
+    let chunks_text: Vec<String> = match strategy {
+        crate::models::ChunkStrategy::Semantic => {
+            match semantic_chunk(&http, embed_url, &gemini_key, &raw_text,
+                chunk_similarity_threshold(), min_chars, max_chars).await {
+                Ok(c)  => c,
+                Err(e) => return HttpResponse::BadGateway()
+                    .json(ApiError::new(502, format!("Semantic chunk error: {e}"))),
+            }
+        }
+        crate::models::ChunkStrategy::Sentence   => sentence_chunk(&raw_text, min_chars, max_chars),
+        crate::models::ChunkStrategy::Structural => structural_chunk(&raw_text, min_chars, max_chars),
+        crate::models::ChunkStrategy::Fixed      => fixed_chunk(&raw_text, max_chars),
     };
+
     let title      = body.title.clone();
     let source_url = body.source_url.clone().unwrap_or_else(|| "manual".to_string());
     let category   = body.category.clone().unwrap_or_else(|| "Umum".to_string());

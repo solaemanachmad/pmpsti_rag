@@ -144,21 +144,45 @@ impl ApiError {
 //  DOCUMENT INGEST REQUESTS
 // ══════════════════════════════════════════════════════════════════
 
+/// Strategi chunking yang bisa dipilih saat ingest.
+/// - `semantic`    : Embed tiap kalimat, split saat similarity drop (hemat quota dengan bijak)
+/// - `sentence`    : Split di batas kalimat/paragraf, tanpa embedding (0 Gemini calls saat chunking)
+/// - `structural`  : Baris/blok terstruktur (cocok untuk daftar, tabel, data dosen)
+/// - `fixed`       : Split setiap N karakter (paling cepat, fallback)
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ChunkStrategy {
+    Semantic,
+    Sentence,
+    Structural,
+    Fixed,
+}
+
+impl Default for ChunkStrategy {
+    fn default() -> Self { ChunkStrategy::Sentence }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct IngestUrlRequest {
-    pub url:         String,
-    pub title:       Option<String>,
-    pub category:    Option<String>,
-    pub subcategory: Option<String>,
+    pub url:            String,
+    pub title:          Option<String>,
+    pub category:       Option<String>,
+    pub subcategory:    Option<String>,
+    /// Strategi chunking. Default: "sentence" (tidak perlu Gemini quota saat chunking)
+    #[serde(default)]
+    pub chunk_strategy: ChunkStrategy,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct IngestTextRequest {
-    pub content:     String,
-    pub title:       String,
-    pub source_url:  Option<String>,
-    pub category:    Option<String>,
-    pub subcategory: Option<String>,
+    pub content:        String,
+    pub title:          String,
+    pub source_url:     Option<String>,
+    pub category:       Option<String>,
+    pub subcategory:    Option<String>,
+    /// Strategi chunking. Default: "sentence"
+    #[serde(default)]
+    pub chunk_strategy: ChunkStrategy,
 }
 
 
