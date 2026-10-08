@@ -1591,7 +1591,13 @@ impl Database {
     pub async fn insert_document_chunks(&self, chunks: &[DocumentChunk]) -> Result<usize, String> {
         let mut inserted = 0usize;
         for chunk in chunks {
-            let vec = pgvector::Vector::from(chunk.embedding.clone());
+            // Kalau embedding kosong (mis. quota Gemini habis), simpan NULL agar
+            // pgvector tidak error. Chunk tetap bisa dicari via fulltext search.
+            let vec: Option<pgvector::Vector> = if chunk.embedding.is_empty() {
+                None
+            } else {
+                Some(pgvector::Vector::from(chunk.embedding.clone()))
+            };
             sqlx::query(
                 "INSERT INTO documents
                     (document_id, title, content, source_url, category, subcategory,

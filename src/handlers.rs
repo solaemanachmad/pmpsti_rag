@@ -2054,8 +2054,12 @@ pub async fn admin_ingest_url(
     for (i, chunk_text) in chunks_text.iter().enumerate() {
         let embedding = match embed_with_retry(&http, embed_url, &gemini_key, chunk_text).await {
             Ok(v)  => v,
-            Err(e) => return HttpResponse::BadGateway()
-                .json(ApiError::new(502, format!("Embed chunk {i}: {e}"))),
+            Err(e) => {
+                // Kalau embed gagal (mis. 429 quota habis), simpan chunk tanpa embedding.
+                // Chunk tetap bisa dicari via fulltext search.
+                eprintln!("[ingest-url] Embed chunk {i} gagal ({}), simpan tanpa embedding", e);
+                vec![]
+            }
         };
 
         doc_chunks.push(DocumentChunk {
@@ -2147,8 +2151,12 @@ pub async fn admin_ingest_text(
     for (i, chunk_text) in chunks_text.iter().enumerate() {
         let embedding = match embed_with_retry(&http, embed_url, &gemini_key, chunk_text).await {
             Ok(v)  => v,
-            Err(e) => return HttpResponse::BadGateway()
-                .json(ApiError::new(502, format!("Embed chunk {i}: {e}"))),
+            Err(e) => {
+                // Kalau embed gagal (mis. 429 quota habis), simpan chunk tanpa embedding.
+                // Chunk tetap bisa dicari via fulltext search.
+                eprintln!("[ingest-text] Embed chunk {i} gagal ({}), simpan tanpa embedding", e);
+                vec![]
+            }
         };
 
         doc_chunks.push(DocumentChunk {
