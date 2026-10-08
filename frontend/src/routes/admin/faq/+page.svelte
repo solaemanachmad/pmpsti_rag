@@ -186,9 +186,11 @@
                 Terakhir: {formatDate(q.last_asked)}
               </span>
               <button
-                on:click={() => pinned
-                  ? unpinQuestion(pins.find(p => p.question === q.query_text)!.id)
-                  : pinQuestion(q.query_text)}
+                on:click={() => {
+                const pin = pins.find(p => p.question === q.query_text);
+                if (pinned && pin) unpinQuestion(pin.id);
+                else pinQuestion(q.query_text);
+              }}
                 disabled={saving}
                 title={pinned ? 'Hapus pin' : 'Pin pertanyaan ini'}
                 class="shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border

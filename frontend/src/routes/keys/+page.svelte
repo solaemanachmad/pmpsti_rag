@@ -129,17 +129,17 @@
         <h2 class="text-sm font-medium mb-3">Key baru</h2>
         <div class="space-y-3">
           <div>
-            <label class="text-xs font-medium text-muted-foreground mb-1 block">Nama</label>
-            <input bind:value={newName} placeholder="contoh: Production App" class="input" />
+            <label for="key-name" class="text-xs font-medium text-muted-foreground mb-1 block">Nama</label>
+            <input id="key-name" bind:value={newName} placeholder="contoh: Production App" class="input" />
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="text-xs font-medium text-muted-foreground mb-1 block">Rate limit (req/menit)</label>
-              <input bind:value={newRateLimit} type="number" min="1" max="1000" class="input" />
+              <label for="key-ratelimit" class="text-xs font-medium text-muted-foreground mb-1 block">Rate limit (req/menit)</label>
+              <input id="key-ratelimit" bind:value={newRateLimit} type="number" min="1" max="1000" class="input" />
             </div>
             <div>
-              <label class="text-xs font-medium text-muted-foreground mb-1 block">Expired (opsional)</label>
-              <input bind:value={newExpiresAt} type="date" class="input" />
+              <label for="key-expires" class="text-xs font-medium text-muted-foreground mb-1 block">Expired (opsional)</label>
+              <input id="key-expires" bind:value={newExpiresAt} type="date" class="input" />
             </div>
           </div>
           <div class="flex gap-2 justify-end">

@@ -209,7 +209,10 @@
       {#each sessions as s (s.id)}
         <div
           class="group flex items-center gap-1 px-2 py-1.5 rounded-lg cursor-pointer text-sm transition-colors {activeSessionId === s.id ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'}"
+          role="button"
+          tabindex="0"
           on:click={() => loadSession(s.id)}
+          on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') loadSession(s.id); }}
         >
           {#if renamingId === s.id}
             <input
@@ -217,7 +220,6 @@
               on:keydown={(e) => { if (e.key === 'Enter') saveRename(s.id); if (e.key === 'Escape') renamingId = null; }}
               class="flex-1 text-xs bg-background border rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring min-w-0"
               on:click|stopPropagation
-              autofocus
             />
             <button on:click|stopPropagation={() => saveRename(s.id)} class="p-0.5 hover:text-primary shrink-0">
               <Check size={12} />

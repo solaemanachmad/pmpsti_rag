@@ -110,18 +110,18 @@
       {#if addMode === 'single'}
         <div class="space-y-3">
           <div>
-            <label class="text-xs text-muted-foreground mb-1 block">Email *</label>
-            <input bind:value={newEmail} type="email" placeholder="nama@mail.ugm.ac.id"
+            <label for="new-email" class="text-xs text-muted-foreground mb-1 block">Email *</label>
+            <input id="new-email" bind:value={newEmail} type="email" placeholder="nama@mail.ugm.ac.id"
               class="w-full px-3 py-2 text-sm border rounded-lg bg-background outline-none focus:ring-2 focus:ring-[#0055A5]/40" />
           </div>
           <div>
-            <label class="text-xs text-muted-foreground mb-1 block">Nama</label>
-            <input bind:value={newName} placeholder="Nama lengkap (opsional)"
+            <label for="new-name" class="text-xs text-muted-foreground mb-1 block">Nama</label>
+            <input id="new-name" bind:value={newName} placeholder="Nama lengkap (opsional)"
               class="w-full px-3 py-2 text-sm border rounded-lg bg-background outline-none focus:ring-2 focus:ring-[#0055A5]/40" />
           </div>
           <div>
-            <label class="text-xs text-muted-foreground mb-1 block">Role</label>
-            <select bind:value={newRole} class="w-full px-3 py-2 text-sm border rounded-lg bg-background">
+            <label for="new-role" class="text-xs text-muted-foreground mb-1 block">Role</label>
+            <select id="new-role" bind:value={newRole} class="w-full px-3 py-2 text-sm border rounded-lg bg-background">
               <option value="user">user</option>
               <option value="admin">admin</option>
             </select>
