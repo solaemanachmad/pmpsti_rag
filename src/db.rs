@@ -1500,6 +1500,19 @@ impl Database {
         Ok(())
     }
 
+    /// Admin approve: set email_verified = true DAN is_active = true sekaligus.
+    /// Digunakan saat user tidak menerima email verifikasi dan butuh manual approval.
+    pub async fn admin_verify_user(&self, user_id: i64) -> Result<(), String> {
+        sqlx::query(
+            "UPDATE users SET email_verified = TRUE, is_active = TRUE, updated_at = NOW() WHERE id = $1"
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub async fn admin_delete_user(&self, user_id: i64) -> Result<(), String> {
         sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(user_id)

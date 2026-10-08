@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { admin } from '$lib/api/client';
   import type { AdminUser } from '$lib/api/client';
-  import { Loader2, Trash2, ShieldCheck, ShieldOff, RefreshCw, Search, UserPlus } from 'lucide-svelte';
+  import { Loader2, Trash2, ShieldCheck, ShieldOff, RefreshCw, Search, UserPlus, MailCheck } from 'lucide-svelte';
 
   let users: AdminUser[] = [];
   let loading = false;
@@ -64,6 +64,13 @@
     try {
       await admin.setRole(u.id, role);
       users = users.map(x => x.id === u.id ? { ...x, role } : x);
+    } catch (e) { alert('Gagal: ' + e); }
+  }
+
+  async function verifyUser(u: AdminUser) {
+    try {
+      await admin.verifyUser(u.id);
+      users = users.map(x => x.id === u.id ? { ...x, email_verified: true, is_active: true } : x);
     } catch (e) { alert('Gagal: ' + e); }
   }
 
@@ -202,17 +209,31 @@
               </select>
             </td>
             <td class="px-4 py-3 hidden md:table-cell">
-              <span class="inline-flex items-center text-xs px-2 py-0.5 rounded-full font-medium
-                           {u.is_active
-                             ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                             : 'bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400'}">
-                {u.is_active ? 'Aktif' : 'Nonaktif'}
-              </span>
+              <div class="flex flex-col gap-1">
+                <span class="inline-flex items-center text-xs px-2 py-0.5 rounded-full font-medium w-fit
+                             {u.is_active
+                               ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                               : 'bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400'}">
+                  {u.is_active ? 'Aktif' : 'Nonaktif'}
+                </span>
+                {#if !u.email_verified}
+                  <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium w-fit
+                               bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                    ⚠ Belum diverifikasi
+                  </span>
+                {/if}
+              </div>
             </td>
             <td class="px-4 py-3 hidden md:table-cell text-xs text-muted-foreground">
               {u.created_at?.slice(0,10) ?? '—'}
             </td>
             <td class="px-4 py-3 text-right flex justify-end gap-1">
+              {#if !u.email_verified}
+                <button on:click={() => verifyUser(u)} title="Verifikasi & Aktifkan"
+                  class="p-1.5 rounded-lg text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
+                  <MailCheck size={15}/>
+                </button>
+              {/if}
               <button on:click={() => toggleUser(u)} title={u.is_active ? 'Nonaktifkan' : 'Aktifkan'}
                 class="p-1.5 rounded-lg transition-colors
                        {u.is_active ? 'text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20'

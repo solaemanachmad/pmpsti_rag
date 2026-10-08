@@ -183,6 +183,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/admin/users",              web::post().to(handlers::admin_create_user))
                     .route("/admin/users/{id}/role",    web::patch().to(handlers::admin_set_user_role))
                     .route("/admin/users/{id}/active",  web::patch().to(handlers::admin_toggle_user))
+                    .route("/admin/users/{id}/verify",  web::patch().to(handlers::admin_verify_user))
                     .route("/admin/users/{id}",         web::delete().to(handlers::admin_delete_user))
                     .route("/admin/sessions",           web::get().to(handlers::admin_list_sessions))
                     .route("/admin/sessions/{id}",      web::delete().to(handlers::admin_delete_session))

@@ -70,7 +70,10 @@
             placeholder="nim@mail.ugm.ac.id" class="input" autocomplete="email" required />
         </div>
         <div>
-          <label class="text-xs font-medium mb-1.5 block text-muted-foreground" for="password">Password</label>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="text-xs font-medium text-muted-foreground" for="password">Password</label>
+            <a href="/forgot-password" class="text-xs text-[#0055A5] hover:underline">Lupa password?</a>
+          </div>
           <input id="password" type="password" bind:value={password}
             placeholder="••••••••" class="input" autocomplete="current-password" required />
         </div>

@@ -19,7 +19,6 @@
     { value: 'sentence',   label: 'Sentence',    desc: 'Cocok untuk artikel, prosa — 0 Gemini quota saat chunking' },
     { value: 'structural', label: 'Structural',  desc: 'Cocok untuk daftar bernomor, tabel, data dosen' },
     { value: 'semantic',   label: 'Semantic',    desc: 'Paling akurat, menggunakan Gemini quota lebih banyak' },
-    { value: 'fixed',      label: 'Fixed',       desc: 'Split setiap N karakter — tercepat, fallback darurat' },
   ];
 
   // Chunk drawer — map document_id → chunk list

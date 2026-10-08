@@ -107,6 +107,9 @@ export const admin = {
       body: JSON.stringify({ is_active })
     }),
 
+  verifyUser: (id: number) =>
+    request<{ message: string }>(`/admin/users/${id}/verify`, { method: 'PATCH' }),
+
   deleteUser: (id: number) =>
     request<{ message: string }>(`/admin/users/${id}`, { method: 'DELETE' }),
 
@@ -304,6 +307,7 @@ export interface AdminUser {
   display_name: string;
   role: string;
   is_active: boolean;
+  email_verified: boolean;
   created_at: string;
 }
 export interface AdminSession {

@@ -1405,6 +1405,22 @@ pub async fn admin_toggle_user(
     }
 }
 
+/// Admin approve/verify user secara manual — bypass email verification.
+pub async fn admin_verify_user(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<i64>,
+) -> HttpResponse {
+    let claims = match require_auth(&req, &state.jwt_secret) { Ok(c) => c, Err(r) => return r };
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(ApiError::new(403, "Hanya admin"));
+    }
+    match state.db.admin_verify_user(path.into_inner()).await {
+        Ok(_)  => HttpResponse::Ok().json(ApiSuccess::new("User diverifikasi dan diaktifkan")),
+        Err(e) => HttpResponse::InternalServerError().json(ApiError::new(500, e)),
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════
 //  ADMIN — CHAT SESSIONS
 // ══════════════════════════════════════════════════════════════════
